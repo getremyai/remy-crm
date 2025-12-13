@@ -1,0 +1,2291 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Remy AI - Restaurant Tracker</title>
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        * { margin:0; padding:0; box-sizing:border-box; }
+        body { font-family:'Inter',system-ui,sans-serif; background:#09090b; color:#fafafa; min-height:100vh; }
+        ::-webkit-scrollbar { width:8px; }
+        ::-webkit-scrollbar-track { background:#18181b; }
+        ::-webkit-scrollbar-thumb { background:#3f3f46; border-radius:4px; }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+    <script type="text/babel">
+        const { useState, useEffect, useMemo, useCallback } = React;
+
+        // ========== GOOGLE SHEETS CONFIGURATION ==========
+        // PASTE YOUR GOOGLE APPS SCRIPT URL HERE (the one ending in /exec):
+        const GOOGLE_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbx-NKkawVYcTqBmDKUI6vyPY6zmQWf7Dgli57o4oWzOup_Pa8h7sQmcq6PgZ5ELNvc/exec';
+        
+        // API Helper Functions for Google Sheets
+        const sheetsAPI = {
+            async loadAll() {
+                if (GOOGLE_SCRIPT_URL === 'YOUR_GOOGLE_SCRIPT_URL_HERE') {
+                    throw new Error('Please configure your Google Script URL on line 26');
+                }
+                const response = await fetch(`${GOOGLE_SCRIPT_URL}?action=getAll`, {
+                    method: 'GET',
+                    redirect: 'follow'
+                });
+                const text = await response.text();
+                const result = JSON.parse(text);
+                if (result.success) return result.data;
+                throw new Error(result.error || 'Failed to load data');
+            },
+            
+            async saveRestaurant(restaurant) {
+                const response = await fetch(GOOGLE_SCRIPT_URL, {
+                    method: 'POST',
+                    redirect: 'follow',
+                    body: JSON.stringify({ action: 'saveRestaurant', restaurant })
+                });
+                const text = await response.text();
+                const result = JSON.parse(text);
+                if (!result.success) throw new Error(result.error);
+                return result;
+            },
+            
+            async deleteRestaurant(id) {
+                const response = await fetch(GOOGLE_SCRIPT_URL, {
+                    method: 'POST',
+                    redirect: 'follow',
+                    body: JSON.stringify({ action: 'deleteRestaurant', id })
+                });
+                const text = await response.text();
+                const result = JSON.parse(text);
+                if (!result.success) throw new Error(result.error);
+                return result;
+            },
+            
+            async saveContact(contact) {
+                const response = await fetch(GOOGLE_SCRIPT_URL, {
+                    method: 'POST',
+                    redirect: 'follow',
+                    body: JSON.stringify({ action: 'saveContact', contact })
+                });
+                const text = await response.text();
+                const result = JSON.parse(text);
+                if (!result.success) throw new Error(result.error);
+                return result;
+            },
+            
+            async deleteContact(id) {
+                const response = await fetch(GOOGLE_SCRIPT_URL, {
+                    method: 'POST',
+                    redirect: 'follow',
+                    body: JSON.stringify({ action: 'deleteContact', id })
+                });
+                const text = await response.text();
+                const result = JSON.parse(text);
+                if (!result.success) throw new Error(result.error);
+                return result;
+            },
+            
+            async syncAll(restaurants, contacts) {
+                const response = await fetch(GOOGLE_SCRIPT_URL, {
+                    method: 'POST',
+                    redirect: 'follow',
+                    body: JSON.stringify({ action: 'syncAll', restaurants, contacts })
+                });
+                const text = await response.text();
+                const result = JSON.parse(text);
+                if (result.success) return result.data;
+                throw new Error(result.error);
+            }
+        };
+            
+        // Stage configuration with time targets and conversion rates
+        const STAGES = [
+            { id: 'identified', name: 'Identified', color: '#6b7280', targetDays: 14, conversionRate: 0.15 },
+            { id: 'conv1_scheduled', name: 'Call 1 Scheduled', color: '#8b5cf6', targetDays: 7, conversionRate: 0.25 },
+            { id: 'conv1_done', name: 'Call 1 Done', color: '#a78bfa', targetDays: 7, conversionRate: 0.30 },
+            { id: 'conv2_scheduled', name: 'Call 2 Scheduled', color: '#3b82f6', targetDays: 7, conversionRate: 0.35 },
+            { id: 'conv2_done', name: 'Call 2 Done', color: '#60a5fa', targetDays: 7, conversionRate: 0.40 },
+            { id: 'proposal_sent', name: 'Proposal Sent', color: '#f59e0b', targetDays: 21, conversionRate: 0.50 },
+            { id: 'proposal_accepted', name: 'Accepted', color: '#22c55e', targetDays: 7, conversionRate: 0.85 },
+            { id: 'trial', name: 'Trial', color: '#14b8a6', targetDays: 20, conversionRate: 0.85 },
+            { id: 'won', name: 'Live Client', color: '#10b981', targetDays: 0, conversionRate: 1 },
+            { id: 'lost', name: 'Lost', color: '#dc2626', targetDays: 0, conversionRate: 0 },
+            { id: 'passive', name: 'Passive', color: '#9ca3af', targetDays: 0, conversionRate: 0 }
+        ];
+
+        // Pipeline stages (active deals only - for Kanban)
+        const PIPELINE_STAGES = STAGES.filter(s => 
+            !['identified', 'won', 'lost', 'passive'].includes(s.id)
+        );
+
+        // All active stages (including identified, excluding end states)
+        const ACTIVE_STAGES = STAGES.filter(s => 
+            !['won', 'lost', 'passive'].includes(s.id)
+        );
+
+        const BOOKING_SYSTEMS = ['OpenTable', 'Resy', 'SevenRooms', 'TheFork', 'ResDiary', 'Quandoo', 'Tablein', 'Phone Only', 'Other'];
+
+        // Icons
+        const Icon = ({ name, size = 18 }) => {
+            const icons = {
+                home: <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>,
+                list: <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>,
+                pipeline: <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>,
+                plus: <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>,
+                search: <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>,
+                edit: <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>,
+                trash: <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>,
+                x: <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>,
+                phone: <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"/></svg>,
+                mail: <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>,
+                globe: <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>,
+                users: <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>,
+                calendar: <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>,
+                check: <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="20 6 9 17 4 12"/></svg>,
+                upload: <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>,
+                download: <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>,
+                note: <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>,
+                refresh: <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>,
+                cloud: <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z"/></svg>,
+                alert: <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>,
+                dollar: <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>,
+                clock: <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>,
+                target: <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2"/></svg>,
+                trendUp: <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg>,
+            };
+            return icons[name] || null;
+        };
+
+        // Utility functions for pipeline calculations
+        const getDaysInStage = (restaurant) => {
+            if (!restaurant.stageEnteredDate) return null;
+            const entered = new Date(restaurant.stageEnteredDate);
+            const now = new Date();
+            return Math.floor((now - entered) / (1000 * 60 * 60 * 24));
+        };
+
+        const getAgingStatus = (restaurant) => {
+            const stage = STAGES.find(s => s.id === restaurant.stage);
+            if (!stage || stage.targetDays === 0) return 'normal';
+            const days = getDaysInStage(restaurant);
+            if (days === null) return 'unknown';
+            if (days > stage.targetDays * 1.5) return 'overdue';
+            if (days > stage.targetDays) return 'warning';
+            return 'normal';
+        };
+
+        const getContractValue = (restaurant) => {
+            const fee = parseFloat(restaurant.targetMonthlyFee) || 0;
+            return fee * 12;
+        };
+
+        const getPipelineValue = (restaurants) => {
+            return restaurants
+                .filter(r => !['lost', 'won', 'passive'].includes(r.stage))
+                .reduce((sum, r) => sum + getContractValue(r), 0);
+        };
+
+        const getWeightedPipelineValue = (restaurants) => {
+            return restaurants
+                .filter(r => !['lost', 'won', 'passive'].includes(r.stage))
+                .reduce((sum, r) => {
+                    const stage = STAGES.find(s => s.id === r.stage);
+                    const value = getContractValue(r);
+                    return sum + (value * (stage?.conversionRate || 0));
+                }, 0);
+        };
+
+        const formatCurrency = (amount) => {
+            return new Intl.NumberFormat('en-GB', { style: 'currency', currency: 'GBP', minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(amount);
+        };
+
+        // Styled components via inline styles
+        const styles = {
+            app: { display: 'flex', minHeight: '100vh' },
+            sidebar: { width: 220, background: '#18181b', borderRight: '1px solid #27272a', display: 'flex', flexDirection: 'column', position: 'fixed', height: '100vh' },
+            logo: { padding: '20px 16px', borderBottom: '1px solid #27272a' },
+            logoText: { fontSize: 20, fontWeight: 700, color: '#f97316', display: 'flex', alignItems: 'center', gap: 8 },
+            nav: { padding: '12px 8px', flex: 1 },
+            navItem: { display: 'flex', alignItems: 'center', gap: 10, padding: '10px 12px', borderRadius: 6, cursor: 'pointer', color: '#a1a1aa', fontSize: 14, fontWeight: 500, marginBottom: 4, transition: 'all 0.15s' },
+            navItemActive: { background: 'rgba(249,115,22,0.15)', color: '#f97316' },
+            main: { flex: 1, marginLeft: 220 },
+            header: { padding: '16px 24px', borderBottom: '1px solid #27272a', display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: '#18181b', position: 'sticky', top: 0, zIndex: 10 },
+            pageTitle: { fontSize: 20, fontWeight: 600 },
+            searchBox: { display: 'flex', alignItems: 'center', gap: 8, background: '#27272a', borderRadius: 6, padding: '8px 12px', width: 260 },
+            searchInput: { flex: 1, background: 'none', border: 'none', outline: 'none', color: '#fff', fontSize: 14 },
+            btn: { display: 'inline-flex', alignItems: 'center', gap: 6, padding: '8px 16px', borderRadius: 6, fontSize: 14, fontWeight: 500, cursor: 'pointer', border: 'none', transition: 'all 0.15s' },
+            btnPrimary: { background: '#f97316', color: '#fff' },
+            btnSecondary: { background: '#27272a', color: '#fff', border: '1px solid #3f3f46' },
+            content: { padding: 24 },
+            grid: { display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 16, marginBottom: 24 },
+            statCard: { background: '#18181b', border: '1px solid #27272a', borderRadius: 10, padding: 20 },
+            statValue: { fontSize: 32, fontWeight: 700, marginBottom: 4 },
+            statLabel: { fontSize: 13, color: '#71717a' },
+            card: { background: '#18181b', border: '1px solid #27272a', borderRadius: 10, overflow: 'hidden' },
+            cardHeader: { padding: '16px 20px', borderBottom: '1px solid #27272a', display: 'flex', alignItems: 'center', justifyContent: 'space-between' },
+            cardTitle: { fontSize: 15, fontWeight: 600 },
+            table: { width: '100%', borderCollapse: 'collapse' },
+            th: { textAlign: 'left', padding: '12px 16px', fontSize: 11, fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.5, color: '#71717a', background: '#1f1f23', borderBottom: '1px solid #27272a' },
+            td: { padding: '14px 16px', fontSize: 14, borderBottom: '1px solid #27272a', verticalAlign: 'middle' },
+            badge: { display: 'inline-flex', alignItems: 'center', gap: 6, padding: '4px 10px', borderRadius: 20, fontSize: 12, fontWeight: 500 },
+            modal: { position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.8)', display: 'flex', alignItems: 'flex-start', justifyContent: 'center', padding: '40px 20px', zIndex: 100, overflowY: 'auto' },
+            modalContent: { background: '#18181b', border: '1px solid #27272a', borderRadius: 12, width: '100%', maxWidth: 640 },
+            modalHeader: { padding: '20px 24px', borderBottom: '1px solid #27272a', display: 'flex', alignItems: 'center', justifyContent: 'space-between' },
+            modalBody: { padding: 24 },
+            modalFooter: { padding: '16px 24px', borderTop: '1px solid #27272a', display: 'flex', justifyContent: 'flex-end', gap: 12 },
+            formGrid: { display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 16 },
+            formGroup: { display: 'flex', flexDirection: 'column', gap: 6 },
+            formLabel: { fontSize: 13, fontWeight: 500, color: '#a1a1aa' },
+            formInput: { background: '#27272a', border: '1px solid #3f3f46', borderRadius: 6, padding: '10px 12px', color: '#fff', fontSize: 14, outline: 'none' },
+            formSection: { marginBottom: 24 },
+            formSectionTitle: { fontSize: 13, fontWeight: 600, color: '#f97316', marginBottom: 12, paddingBottom: 8, borderBottom: '1px solid #27272a' },
+        };
+
+        // Stage Badge Component
+        const StageBadge = ({ stage }) => {
+            const stageInfo = STAGES.find(s => s.id === stage) || STAGES[0];
+            return (
+                <span style={{ ...styles.badge, background: `${stageInfo.color}22`, color: stageInfo.color }}>
+                    <span style={{ width: 6, height: 6, borderRadius: '50%', background: stageInfo.color }}></span>
+                    {stageInfo.name}
+                </span>
+            );
+        };
+
+        // Dashboard Component
+        const Dashboard = ({ restaurants, onEdit, onAddNote }) => {
+            const today = new Date();
+            today.setHours(0, 0, 0, 0);
+            
+            const [selectedRestaurant, setSelectedRestaurant] = useState('');
+            const [quickNote, setQuickNote] = useState('');
+            
+            const stats = useMemo(() => ({
+                total: restaurants.length,
+                won: restaurants.filter(r => r.stage === 'won').length,
+                pipeline: restaurants.filter(r => !['won', 'passive', 'identified', 'lost'].includes(r.stage)).length,
+                needsAction: restaurants.filter(r => {
+                    if (r.stage === 'won' || r.stage === 'passive' || r.stage === 'lost') return false;
+                    if (!r.nextContact) return true;
+                    const nextDate = new Date(r.nextContact);
+                    return nextDate <= today;
+                }).length,
+                lost: restaurants.filter(r => r.stage === 'lost').length
+            }), [restaurants]);
+
+            const priorityActions = useMemo(() => 
+                restaurants
+                    .filter(r => r.stage !== 'won' && r.stage !== 'passive' && r.stage !== 'lost' && r.nextContact)
+                    .map(r => {
+                        const nextDate = new Date(r.nextContact);
+                        const diffTime = nextDate - today;
+                        const daysUntil = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+                        const isOverdue = daysUntil < 0;
+                        const priority = isOverdue ? 'high' : daysUntil <= 2 ? 'medium' : 'low';
+                        return { ...r, daysUntil, priority, isOverdue };
+                    })
+                    .sort((a, b) => a.daysUntil - b.daysUntil)
+                    .slice(0, 5)
+            , [restaurants]);
+            
+            const handleAddQuickNote = () => {
+                if (!selectedRestaurant || !quickNote.trim()) return;
+                onAddNote(selectedRestaurant, quickNote.trim());
+                setQuickNote('');
+            };
+            
+            // Get recent notes from selected restaurant
+            const selectedRestaurantData = restaurants.find(r => r.id === selectedRestaurant);
+            const recentNotes = selectedRestaurantData?.notesHistory?.slice(-3).reverse() || [];
+
+            return (
+                <div>
+                    {/* Quick Notes Section - Full Width at Top */}
+                    <div style={{ ...styles.card, marginBottom: 24 }}>
+                        <div style={styles.cardHeader}>
+                            <span style={styles.cardTitle}>⚡ Quick Notes</span>
+                        </div>
+                        <div style={{ padding: 16 }}>
+                            <div style={{ display: 'flex', gap: 12, marginBottom: 12 }}>
+                                <select 
+                                    style={{ ...styles.formInput, flex: '0 0 250px' }} 
+                                    value={selectedRestaurant} 
+                                    onChange={e => setSelectedRestaurant(e.target.value)}
+                                >
+                                    <option value="">Select restaurant...</option>
+                                    {[...restaurants].sort((a, b) => a.name.localeCompare(b.name)).map(r => (
+                                        <option key={r.id} value={r.id}>{r.name}</option>
+                                    ))}
+                                </select>
+                                <input 
+                                    style={{ ...styles.formInput, flex: 1 }} 
+                                    value={quickNote} 
+                                    onChange={e => setQuickNote(e.target.value)}
+                                    placeholder={selectedRestaurant ? "Type your note and press Enter..." : "Select a restaurant first..."}
+                                    disabled={!selectedRestaurant}
+                                    onKeyPress={e => {
+                                        if (e.key === 'Enter' && quickNote.trim()) {
+                                            handleAddQuickNote();
+                                        }
+                                    }}
+                                />
+                                <button 
+                                    style={{ ...styles.btn, ...styles.btnPrimary, opacity: (!selectedRestaurant || !quickNote.trim()) ? 0.5 : 1 }}
+                                    onClick={handleAddQuickNote}
+                                    disabled={!selectedRestaurant || !quickNote.trim()}
+                                >
+                                    <Icon name="plus" size={16} /> Add Note
+                                </button>
+                            </div>
+                            
+                            {selectedRestaurant && (
+                                <div style={{ background: '#18181b', borderRadius: 8, border: '1px solid #27272a' }}>
+                                    {recentNotes.length === 0 ? (
+                                        <div style={{ padding: 16, textAlign: 'center', color: '#71717a', fontSize: 13 }}>
+                                            No notes yet for {selectedRestaurantData?.name}
+                                        </div>
+                                    ) : (
+                                        <>
+                                            <div style={{ padding: '8px 12px', borderBottom: '1px solid #27272a', fontSize: 11, color: '#71717a' }}>
+                                                Recent notes for <strong style={{ color: '#f97316' }}>{selectedRestaurantData?.name}</strong>
+                                            </div>
+                                            {recentNotes.map((note, idx) => (
+                                                <div key={note.id} style={{ 
+                                                    padding: '10px 12px', 
+                                                    borderBottom: idx < recentNotes.length - 1 ? '1px solid #27272a' : 'none',
+                                                    display: 'flex',
+                                                    gap: 10,
+                                                    alignItems: 'flex-start'
+                                                }}>
+                                                    <div style={{ 
+                                                        fontSize: 10, 
+                                                        color: '#71717a', 
+                                                        whiteSpace: 'nowrap',
+                                                        background: '#27272a',
+                                                        padding: '2px 6px',
+                                                        borderRadius: 4
+                                                    }}>{note.date}</div>
+                                                    <div style={{ flex: 1, fontSize: 12, lineHeight: 1.4 }}>{note.text}</div>
+                                                </div>
+                                            ))}
+                                            {(selectedRestaurantData?.notesHistory?.length || 0) > 3 && (
+                                                <div 
+                                                    style={{ padding: '8px 12px', textAlign: 'center', fontSize: 11, color: '#f97316', cursor: 'pointer', borderTop: '1px solid #27272a' }}
+                                                    onClick={() => onEdit(selectedRestaurantData)}
+                                                >
+                                                    View all {selectedRestaurantData.notesHistory.length} notes →
+                                                </div>
+                                            )}
+                                        </>
+                                    )}
+                                </div>
+                            )}
+                        </div>
+                    </div>
+                
+                    <div style={styles.grid}>
+                        <div style={styles.statCard}>
+                            <div style={{ ...styles.statValue, color: '#f97316' }}>{stats.total}</div>
+                            <div style={styles.statLabel}>Total Restaurants</div>
+                        </div>
+                        <div style={styles.statCard}>
+                            <div style={{ ...styles.statValue, color: '#22c55e' }}>{stats.won}</div>
+                            <div style={styles.statLabel}>Live Clients</div>
+                        </div>
+                        <div style={styles.statCard}>
+                            <div style={{ ...styles.statValue, color: '#3b82f6' }}>{stats.pipeline}</div>
+                            <div style={styles.statLabel}>In Pipeline</div>
+                        </div>
+                        <div style={styles.statCard}>
+                            <div style={{ ...styles.statValue, color: '#eab308' }}>{stats.needsAction}</div>
+                            <div style={styles.statLabel}>Due Today/Overdue</div>
+                        </div>
+                        <div style={styles.statCard}>
+                            <div style={{ ...styles.statValue, color: '#dc2626' }}>{stats.lost}</div>
+                            <div style={styles.statLabel}>Rejected</div>
+                        </div>
+                    </div>
+
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 24 }}>
+                        <div style={styles.card}>
+                            <div style={styles.cardHeader}>
+                                <span style={styles.cardTitle}>📅 Next Contacts</span>
+                            </div>
+                            <div style={{ padding: 16 }}>
+                                {priorityActions.length === 0 ? (
+                                    <div style={{ color: '#71717a', fontSize: 14, textAlign: 'center', padding: 20 }}>No scheduled contacts</div>
+                                ) : priorityActions.map(r => (
+                                    <div key={r.id} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 0', borderBottom: '1px solid #27272a', cursor: 'pointer' }} onClick={() => onEdit(r)}>
+                                        <div style={{ 
+                                            minWidth: 44, 
+                                            padding: '4px 8px', 
+                                            borderRadius: 6, 
+                                            background: r.daysUntil === null ? '#27272a' : r.isOverdue ? 'rgba(239,68,68,0.15)' : r.daysUntil === 0 ? 'rgba(234,179,8,0.15)' : 'rgba(34,197,94,0.15)',
+                                            textAlign: 'center',
+                                            fontSize: 11,
+                                            fontWeight: 600,
+                                            color: r.daysUntil === null ? '#71717a' : r.isOverdue ? '#ef4444' : r.daysUntil === 0 ? '#eab308' : '#22c55e'
+                                        }}>
+                                            {r.daysUntil === null ? '—' : 
+                                             r.isOverdue ? `${Math.abs(r.daysUntil)}d ago` :
+                                             r.daysUntil === 0 ? 'Today' :
+                                             `${r.daysUntil}d`}
+                                        </div>
+                                        <div style={{ flex: 1 }}>
+                                            <div style={{ fontWeight: 500, fontSize: 14 }}>{r.name}</div>
+                                            <div style={{ fontSize: 12, color: '#71717a' }}>
+                                                {r.nextContactType ? r.nextContactType.charAt(0).toUpperCase() + r.nextContactType.slice(1) : 'Not set'}
+                                                {r.contact && ` • ${r.contact}`}
+                                            </div>
+                                        </div>
+                                        <StageBadge stage={r.stage} />
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+
+                        <div style={styles.card}>
+                            <div style={styles.cardHeader}>
+                                <span style={styles.cardTitle}>📈 Pipeline Funnel</span>
+                            </div>
+                            <div style={{ padding: 20 }}>
+                                {(() => {
+                                    // Group stages for funnel visualization
+                                    const funnelStages = [
+                                        { id: 'top', name: 'Top of Funnel', stages: ['identified'], color: '#8b5cf6' },
+                                        { id: 'active', name: 'Active', stages: ['conv1_scheduled', 'conv1_done', 'conv2_scheduled', 'conv2_done', 'proposal_sent'], color: '#3b82f6' },
+                                        { id: 'closing', name: 'Closing', stages: ['proposal_accepted', 'trial'], color: '#14b8a6' },
+                                        { id: 'won', name: 'Won (Live)', stages: ['won'], color: '#10b981' },
+                                        { id: 'lost', name: 'Lost', stages: ['lost', 'passive'], color: '#ef4444' },
+                                    ];
+                                    
+                                    const maxCount = Math.max(...funnelStages.map(fs => 
+                                        restaurants.filter(r => fs.stages.includes(r.stage)).length
+                                    ), 1);
+                                    
+                                    return (
+                                        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                                            {funnelStages.map((fs) => {
+                                                const count = restaurants.filter(r => fs.stages.includes(r.stage)).length;
+                                                const widthPercent = maxCount > 0 ? (count / maxCount) * 100 : 0;
+                                                
+                                                return (
+                                                    <div key={fs.id} style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                                                        <div style={{ width: 110, fontSize: 12, color: '#a1a1aa', textAlign: 'right' }}>{fs.name}</div>
+                                                        <div style={{ flex: 1, background: '#27272a', borderRadius: 6, height: 28, overflow: 'hidden', position: 'relative' }}>
+                                                            <div style={{
+                                                                width: `${widthPercent}%`,
+                                                                height: '100%',
+                                                                background: `linear-gradient(90deg, ${fs.color}, ${fs.color}cc)`,
+                                                                borderRadius: 6,
+                                                                transition: 'width 0.3s ease'
+                                                            }} />
+                                                            <span style={{ 
+                                                                position: 'absolute', 
+                                                                left: 12, 
+                                                                top: '50%', 
+                                                                transform: 'translateY(-50%)',
+                                                                fontSize: 13, 
+                                                                fontWeight: 600, 
+                                                                color: count > 0 ? '#fff' : '#71717a'
+                                                            }}>{count}</span>
+                                                        </div>
+                                                        <div style={{ width: 45, fontSize: 12, color: '#71717a', textAlign: 'right' }}>
+                                                            {restaurants.length > 0 ? Math.round((count / restaurants.length) * 100) : 0}%
+                                                        </div>
+                                                    </div>
+                                                );
+                                            })}
+                                        </div>
+                                    );
+                                })()}
+                                
+                                {/* Conversion rates */}
+                                <div style={{ marginTop: 20, paddingTop: 16, borderTop: '1px solid #27272a' }}>
+                                    <div style={{ fontSize: 12, color: '#71717a', marginBottom: 12 }}>Conversion Rates</div>
+                                    <div style={{ display: 'flex', gap: 16 }}>
+                                        {(() => {
+                                            const identified = restaurants.filter(r => ['identified', 'conv1_scheduled', 'conv1_done', 'conv2_scheduled', 'conv2_done', 'proposal_sent', 'proposal_accepted', 'trial', 'won'].includes(r.stage)).length;
+                                            const proposals = restaurants.filter(r => ['proposal_sent', 'proposal_accepted', 'trial', 'won'].includes(r.stage)).length;
+                                            const won = restaurants.filter(r => r.stage === 'won').length;
+                                            const rejected = restaurants.filter(r => r.stage === 'lost').length;
+                                            
+                                            return (
+                                                <>
+                                                    <div style={{ flex: 1, background: '#27272a', borderRadius: 8, padding: 12, textAlign: 'center' }}>
+                                                        <div style={{ fontSize: 20, fontWeight: 700, color: '#3b82f6' }}>
+                                                            {identified > 0 ? Math.round((proposals / identified) * 100) : 0}%
+                                                        </div>
+                                                        <div style={{ fontSize: 11, color: '#71717a' }}>Lead → Proposal</div>
+                                                    </div>
+                                                    <div style={{ flex: 1, background: '#27272a', borderRadius: 8, padding: 12, textAlign: 'center' }}>
+                                                        <div style={{ fontSize: 20, fontWeight: 700, color: '#10b981' }}>
+                                                            {proposals > 0 ? Math.round((won / proposals) * 100) : 0}%
+                                                        </div>
+                                                        <div style={{ fontSize: 11, color: '#71717a' }}>Proposal → Won</div>
+                                                    </div>
+                                                    <div style={{ flex: 1, background: '#27272a', borderRadius: 8, padding: 12, textAlign: 'center' }}>
+                                                        <div style={{ fontSize: 20, fontWeight: 700, color: '#ef4444' }}>
+                                                            {(proposals + rejected) > 0 ? Math.round((rejected / (proposals + rejected)) * 100) : 0}%
+                                                        </div>
+                                                        <div style={{ fontSize: 11, color: '#71717a' }}>Rejection Rate</div>
+                                                    </div>
+                                                </>
+                                            );
+                                        })()}
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+
+                </div>
+            );
+        };
+
+        // Pipeline Visualization Component
+        const PipelineView = ({ restaurants, onEdit, onStageChange }) => {
+            const [filters, setFilters] = useState({
+                minTables: '',
+                maxTables: '',
+                nextContactBefore: '',
+                trialDateAfter: '',
+                showOverdueOnly: false
+            });
+            const [draggedItem, setDraggedItem] = useState(null);
+
+            // Filter restaurants
+            const filteredRestaurants = useMemo(() => {
+                return restaurants.filter(r => {
+                    // Only show active pipeline (not identified, won, lost, passive)
+                    if (['identified', 'lost', 'won', 'passive'].includes(r.stage)) return false;
+                    
+                    // Apply filters
+                    if (filters.minTables && (parseInt(r.tables) || 0) < parseInt(filters.minTables)) return false;
+                    if (filters.maxTables && (parseInt(r.tables) || 0) > parseInt(filters.maxTables)) return false;
+                    if (filters.nextContactBefore && r.nextContact && r.nextContact > filters.nextContactBefore) return false;
+                    if (filters.trialDateAfter && r.trialDate && r.trialDate < filters.trialDateAfter) return false;
+                    if (filters.showOverdueOnly && getAgingStatus(r) !== 'overdue') return false;
+                    
+                    return true;
+                });
+            }, [restaurants, filters]);
+
+            // Calculate pipeline metrics
+            const metrics = useMemo(() => {
+                const active = restaurants.filter(r => !['lost', 'won', 'passive'].includes(r.stage));
+                const pipelineDeals = restaurants.filter(r => !['identified', 'lost', 'won', 'passive'].includes(r.stage));
+                
+                const totalValue = getPipelineValue(restaurants);
+                const weightedValue = getWeightedPipelineValue(restaurants);
+                
+                const overdueCount = pipelineDeals.filter(r => getAgingStatus(r) === 'overdue').length;
+                const warningCount = pipelineDeals.filter(r => getAgingStatus(r) === 'warning').length;
+                
+                // Average days in stage by stage
+                const stageMetrics = PIPELINE_STAGES.map(stage => {
+                    const stageDeals = pipelineDeals.filter(r => r.stage === stage.id);
+                    const daysInStage = stageDeals.map(r => getDaysInStage(r)).filter(d => d !== null);
+                    const avgDays = daysInStage.length > 0 ? Math.round(daysInStage.reduce((a, b) => a + b, 0) / daysInStage.length) : 0;
+                    const stageValue = stageDeals.reduce((sum, r) => sum + getContractValue(r), 0);
+                    return {
+                        ...stage,
+                        count: stageDeals.length,
+                        avgDays,
+                        value: stageValue,
+                        weightedValue: stageValue * stage.conversionRate
+                    };
+                });
+
+                return { totalValue, weightedValue, overdueCount, warningCount, stageMetrics, pipelineCount: pipelineDeals.length };
+            }, [restaurants]);
+
+            // 6-month forecast with confidence bands
+            const forecast = useMemo(() => {
+                const months = [];
+                const today = new Date();
+                
+                // Define confidence categories
+                const COMMIT_STAGES = ['proposal_accepted', 'trial']; // 85% probability
+                const BEST_CASE_STAGES = ['proposal_sent']; // 50% probability  
+                const PIPELINE_STAGES_IDS = ['conv1_scheduled', 'conv1_done', 'conv2_scheduled', 'conv2_done']; // 25-40%
+                const UPSIDE_STAGES = ['identified']; // 15%
+                
+                let cumulativeCommit = 0;
+                let cumulativeBestCase = 0;
+                let cumulativePipeline = 0;
+                
+                for (let i = 0; i < 6; i++) {
+                    const monthDate = new Date(today.getFullYear(), today.getMonth() + i, 1);
+                    const monthEnd = new Date(today.getFullYear(), today.getMonth() + i + 1, 0);
+                    const monthName = monthDate.toLocaleDateString('en-GB', { month: 'short', year: '2-digit' });
+                    
+                    let commitValue = 0;
+                    let bestCaseValue = 0;
+                    let pipelineValue = 0;
+                    let upsideValue = 0;
+                    let dealCount = 0;
+                    
+                    // Breakdown by stage for this month
+                    const stageBreakdown = {};
+                    
+                    restaurants.forEach(r => {
+                        if (['lost', 'won', 'passive'].includes(r.stage)) return;
+                        
+                        const stage = STAGES.find(s => s.id === r.stage);
+                        if (!stage) return;
+                        
+                        const daysInStage = getDaysInStage(r) || 0;
+                        const remainingDays = Math.max(0, 90 - daysInStage);
+                        const expectedCloseDate = new Date(today.getTime() + remainingDays * 24 * 60 * 60 * 1000);
+                        
+                        if (expectedCloseDate >= monthDate && expectedCloseDate <= monthEnd) {
+                            const contractValue = getContractValue(r);
+                            
+                            // Categorize by confidence level
+                            if (COMMIT_STAGES.includes(r.stage)) {
+                                commitValue += contractValue * 0.85;
+                            } else if (BEST_CASE_STAGES.includes(r.stage)) {
+                                bestCaseValue += contractValue * 0.50;
+                            } else if (PIPELINE_STAGES_IDS.includes(r.stage)) {
+                                pipelineValue += contractValue * stage.conversionRate;
+                            } else if (UPSIDE_STAGES.includes(r.stage)) {
+                                upsideValue += contractValue * 0.15;
+                            }
+                            
+                            dealCount += stage.conversionRate;
+                            
+                            // Track by stage for breakdown
+                            if (!stageBreakdown[r.stage]) {
+                                stageBreakdown[r.stage] = { value: 0, count: 0, color: stage.color };
+                            }
+                            stageBreakdown[r.stage].value += contractValue * stage.conversionRate;
+                            stageBreakdown[r.stage].count++;
+                        }
+                    });
+                    
+                    cumulativeCommit += commitValue;
+                    cumulativeBestCase += commitValue + bestCaseValue;
+                    cumulativePipeline += commitValue + bestCaseValue + pipelineValue;
+                    
+                    months.push({ 
+                        month: monthName, 
+                        commit: Math.round(commitValue),
+                        bestCase: Math.round(bestCaseValue),
+                        pipeline: Math.round(pipelineValue),
+                        upside: Math.round(upsideValue),
+                        total: Math.round(commitValue + bestCaseValue + pipelineValue + upsideValue),
+                        weighted: Math.round(commitValue + bestCaseValue + pipelineValue),
+                        cumulativeCommit: Math.round(cumulativeCommit),
+                        cumulativeBestCase: Math.round(cumulativeBestCase),
+                        cumulativePipeline: Math.round(cumulativePipeline),
+                        deals: Math.round(dealCount * 10) / 10,
+                        stageBreakdown
+                    });
+                }
+                
+                return months;
+            }, [restaurants]);
+
+            // Drag and drop handlers
+            const handleDragStart = (e, restaurant) => {
+                setDraggedItem(restaurant);
+                e.dataTransfer.effectAllowed = 'move';
+            };
+
+            const handleDragOver = (e) => {
+                e.preventDefault();
+                e.dataTransfer.dropEffect = 'move';
+            };
+
+            const handleDrop = (e, newStage) => {
+                e.preventDefault();
+                if (draggedItem && draggedItem.stage !== newStage) {
+                    onStageChange(draggedItem.id, newStage);
+                }
+                setDraggedItem(null);
+            };
+
+            const handleDragEnd = () => {
+                setDraggedItem(null);
+            };
+
+            return (
+                <div>
+                    {/* Summary Cards */}
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 16, marginBottom: 24 }}>
+                        <div style={styles.statCard}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+                                <Icon name="dollar" size={20} />
+                                <span style={{ fontSize: 13, color: '#71717a' }}>Pipeline Value</span>
+                            </div>
+                            <div style={{ fontSize: 28, fontWeight: 700, color: '#3b82f6' }}>{formatCurrency(metrics.totalValue)}</div>
+                            <div style={{ fontSize: 12, color: '#71717a' }}>{metrics.pipelineCount} deals</div>
+                        </div>
+                        <div style={styles.statCard}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+                                <Icon name="target" size={20} />
+                                <span style={{ fontSize: 13, color: '#71717a' }}>Weighted Value</span>
+                            </div>
+                            <div style={{ fontSize: 28, fontWeight: 700, color: '#10b981' }}>{formatCurrency(metrics.weightedValue)}</div>
+                            <div style={{ fontSize: 12, color: '#71717a' }}>Probability adjusted</div>
+                        </div>
+                        <div style={styles.statCard}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+                                <Icon name="alert" size={20} />
+                                <span style={{ fontSize: 13, color: '#71717a' }}>Needs Attention</span>
+                            </div>
+                            <div style={{ fontSize: 28, fontWeight: 700, color: metrics.overdueCount > 0 ? '#ef4444' : '#22c55e' }}>
+                                {metrics.overdueCount}
+                            </div>
+                            <div style={{ fontSize: 12, color: '#71717a' }}>{metrics.warningCount} approaching</div>
+                        </div>
+                        <div style={styles.statCard}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+                                <Icon name="trendUp" size={20} />
+                                <span style={{ fontSize: 13, color: '#71717a' }}>Next Month Forecast</span>
+                            </div>
+                            <div style={{ fontSize: 28, fontWeight: 700, color: '#f59e0b' }}>{formatCurrency(forecast[0]?.weighted || 0)}</div>
+                            <div style={{ fontSize: 12, color: '#71717a' }}>~{forecast[0]?.deals || 0} expected closes</div>
+                        </div>
+                    </div>
+
+                    {/* Filters */}
+                    <div style={{ ...styles.card, marginBottom: 24 }}>
+                        <div style={{ padding: 16, display: 'flex', gap: 16, alignItems: 'center', flexWrap: 'wrap' }}>
+                            <span style={{ fontSize: 13, fontWeight: 600, color: '#a1a1aa' }}>Filters:</span>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                                <span style={{ fontSize: 12, color: '#71717a' }}>Tables:</span>
+                                <input 
+                                    type="number" 
+                                    placeholder="Min" 
+                                    style={{ ...styles.formInput, width: 70, padding: '6px 8px', fontSize: 12 }}
+                                    value={filters.minTables}
+                                    onChange={e => setFilters(f => ({ ...f, minTables: e.target.value }))}
+                                />
+                                <span style={{ color: '#71717a' }}>-</span>
+                                <input 
+                                    type="number" 
+                                    placeholder="Max" 
+                                    style={{ ...styles.formInput, width: 70, padding: '6px 8px', fontSize: 12 }}
+                                    value={filters.maxTables}
+                                    onChange={e => setFilters(f => ({ ...f, maxTables: e.target.value }))}
+                                />
+                            </div>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                                <span style={{ fontSize: 12, color: '#71717a' }}>Next contact before:</span>
+                                <input 
+                                    type="date" 
+                                    style={{ ...styles.formInput, padding: '6px 8px', fontSize: 12 }}
+                                    value={filters.nextContactBefore}
+                                    onChange={e => setFilters(f => ({ ...f, nextContactBefore: e.target.value }))}
+                                />
+                            </div>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                                <span style={{ fontSize: 12, color: '#71717a' }}>Trial after:</span>
+                                <input 
+                                    type="date" 
+                                    style={{ ...styles.formInput, padding: '6px 8px', fontSize: 12 }}
+                                    value={filters.trialDateAfter}
+                                    onChange={e => setFilters(f => ({ ...f, trialDateAfter: e.target.value }))}
+                                />
+                            </div>
+                            <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
+                                <input 
+                                    type="checkbox" 
+                                    checked={filters.showOverdueOnly}
+                                    onChange={e => setFilters(f => ({ ...f, showOverdueOnly: e.target.checked }))}
+                                />
+                                <span style={{ fontSize: 12, color: '#ef4444' }}>Overdue only</span>
+                            </label>
+                            <button 
+                                style={{ ...styles.btn, ...styles.btnSecondary, padding: '6px 12px', fontSize: 12 }}
+                                onClick={() => setFilters({ minTables: '', maxTables: '', nextContactBefore: '', trialDateAfter: '', showOverdueOnly: false })}
+                            >
+                                Clear
+                            </button>
+                        </div>
+                    </div>
+
+                    {/* 6-Month Forecast Chart */}
+                    <div style={{ ...styles.card, marginBottom: 24 }}>
+                        <div style={styles.cardHeader}>
+                            <span style={styles.cardTitle}>📊 6-Month Revenue Forecast</span>
+                            <div style={{ display: 'flex', gap: 16, fontSize: 11 }}>
+                                <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                                    <span style={{ width: 12, height: 12, background: '#22c55e', borderRadius: 2 }}></span>
+                                    Commit (85%)
+                                </span>
+                                <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                                    <span style={{ width: 12, height: 12, background: '#f59e0b', borderRadius: 2 }}></span>
+                                    Best Case (50%)
+                                </span>
+                                <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                                    <span style={{ width: 12, height: 12, background: '#3b82f6', borderRadius: 2 }}></span>
+                                    Pipeline (25-40%)
+                                </span>
+                            </div>
+                        </div>
+                        <div style={{ padding: 20 }}>
+                            {/* Stacked Bar Chart with Confidence Bands */}
+                            <div style={{ position: 'relative', height: 200, marginBottom: 16 }}>
+                                {/* Y-axis labels */}
+                                <div style={{ position: 'absolute', left: 0, top: 0, bottom: 30, width: 60, display: 'flex', flexDirection: 'column', justifyContent: 'space-between', fontSize: 10, color: '#71717a' }}>
+                                    {(() => {
+                                        const maxValue = Math.max(...forecast.map(f => f.total), 1);
+                                        return [maxValue, maxValue * 0.75, maxValue * 0.5, maxValue * 0.25, 0].map((v, i) => (
+                                            <span key={i}>{formatCurrency(Math.round(v))}</span>
+                                        ));
+                                    })()}
+                                </div>
+                                
+                                {/* Chart area */}
+                                <div style={{ marginLeft: 65, height: '100%', display: 'flex', alignItems: 'flex-end', gap: 8 }}>
+                                    {forecast.map((m, i) => {
+                                        const maxValue = Math.max(...forecast.map(f => f.total), 1);
+                                        const chartHeight = 160;
+                                        const commitHeight = (m.commit / maxValue) * chartHeight;
+                                        const bestCaseHeight = (m.bestCase / maxValue) * chartHeight;
+                                        const pipelineHeight = (m.pipeline / maxValue) * chartHeight;
+                                        const upsideHeight = (m.upside / maxValue) * chartHeight;
+                                        
+                                        return (
+                                            <div key={i} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+                                                {/* Value label */}
+                                                <div style={{ fontSize: 10, color: '#a1a1aa', marginBottom: 4, height: 16 }}>
+                                                    {m.weighted > 0 ? formatCurrency(m.weighted) : ''}
+                                                </div>
+                                                
+                                                {/* Stacked bar */}
+                                                <div style={{ width: '100%', height: chartHeight, display: 'flex', flexDirection: 'column-reverse', borderRadius: 4, overflow: 'hidden' }}>
+                                                    {/* Commit - bottom (green) */}
+                                                    <div style={{ 
+                                                        width: '100%', 
+                                                        height: commitHeight || 0, 
+                                                        background: '#22c55e',
+                                                        minHeight: m.commit > 0 ? 2 : 0
+                                                    }} title={`Commit: ${formatCurrency(m.commit)}`} />
+                                                    
+                                                    {/* Best Case (orange) */}
+                                                    <div style={{ 
+                                                        width: '100%', 
+                                                        height: bestCaseHeight || 0, 
+                                                        background: '#f59e0b',
+                                                        minHeight: m.bestCase > 0 ? 2 : 0
+                                                    }} title={`Best Case: ${formatCurrency(m.bestCase)}`} />
+                                                    
+                                                    {/* Pipeline (blue) */}
+                                                    <div style={{ 
+                                                        width: '100%', 
+                                                        height: pipelineHeight || 0, 
+                                                        background: '#3b82f6',
+                                                        minHeight: m.pipeline > 0 ? 2 : 0
+                                                    }} title={`Pipeline: ${formatCurrency(m.pipeline)}`} />
+                                                    
+                                                    {/* Upside (faded) */}
+                                                    <div style={{ 
+                                                        width: '100%', 
+                                                        height: upsideHeight || 0, 
+                                                        background: '#6b728033',
+                                                        minHeight: m.upside > 0 ? 2 : 0
+                                                    }} title={`Upside: ${formatCurrency(m.upside)}`} />
+                                                </div>
+                                                
+                                                {/* Month label */}
+                                                <div style={{ fontSize: 11, color: '#71717a', marginTop: 8 }}>{m.month}</div>
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+                                
+                                {/* Cumulative line overlay */}
+                                <svg style={{ position: 'absolute', left: 65, top: 20, right: 0, height: 160, pointerEvents: 'none' }}>
+                                    {(() => {
+                                        const maxValue = Math.max(...forecast.map(f => f.total), 1);
+                                        const maxCumulative = Math.max(...forecast.map(f => f.cumulativePipeline), 1);
+                                        const width = 100 / forecast.length;
+                                        
+                                        // Create path for cumulative line
+                                        const points = forecast.map((m, i) => {
+                                            const x = (i * width) + (width / 2);
+                                            const y = 160 - ((m.cumulativePipeline / maxCumulative) * 150);
+                                            return `${x}%,${y}`;
+                                        }).join(' ');
+                                        
+                                        return (
+                                            <>
+                                                <polyline 
+                                                    points={points}
+                                                    fill="none"
+                                                    stroke="#a855f7"
+                                                    strokeWidth="2"
+                                                    strokeDasharray="4,4"
+                                                />
+                                                {forecast.map((m, i) => {
+                                                    const x = ((i * width) + (width / 2));
+                                                    const y = 160 - ((m.cumulativePipeline / maxCumulative) * 150);
+                                                    return (
+                                                        <circle key={i} cx={`${x}%`} cy={y} r="4" fill="#a855f7" />
+                                                    );
+                                                })}
+                                            </>
+                                        );
+                                    })()}
+                                </svg>
+                            </div>
+                            
+                            {/* Cumulative totals row */}
+                            <div style={{ marginLeft: 65, display: 'flex', gap: 8, borderTop: '1px solid #27272a', paddingTop: 12 }}>
+                                {forecast.map((m, i) => (
+                                    <div key={i} style={{ flex: 1, textAlign: 'center' }}>
+                                        <div style={{ fontSize: 10, color: '#a855f7' }}>
+                                            Σ {formatCurrency(m.cumulativePipeline)}
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                            
+                            {/* Legend for cumulative */}
+                            <div style={{ marginTop: 12, display: 'flex', justifyContent: 'center', gap: 16, fontSize: 11, color: '#71717a' }}>
+                                <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                                    <span style={{ width: 16, height: 2, background: '#a855f7' }}></span>
+                                    Cumulative Forecast
+                                </span>
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* Stage Metrics */}
+                    <div style={{ ...styles.card, marginBottom: 24 }}>
+                        <div style={styles.cardHeader}>
+                            <span style={styles.cardTitle}>⏱️ Stage Performance</span>
+                        </div>
+                        <div style={{ padding: 20 }}>
+                            <div style={{ display: 'grid', gridTemplateColumns: `repeat(${PIPELINE_STAGES.length}, 1fr)`, gap: 12 }}>
+                                {metrics.stageMetrics.map(stage => (
+                                    <div key={stage.id} style={{ 
+                                        background: '#27272a', 
+                                        borderRadius: 8, 
+                                        padding: 12,
+                                        borderTop: `3px solid ${stage.color}`
+                                    }}>
+                                        <div style={{ fontSize: 12, color: '#a1a1aa', marginBottom: 8 }}>{stage.name}</div>
+                                        <div style={{ fontSize: 24, fontWeight: 700, color: '#fff' }}>{stage.count}</div>
+                                        <div style={{ fontSize: 11, color: '#71717a', marginTop: 4 }}>
+                                            Avg: {stage.avgDays}d / {stage.targetDays}d target
+                                        </div>
+                                        <div style={{ fontSize: 11, color: stage.avgDays > stage.targetDays ? '#ef4444' : '#22c55e', marginTop: 2 }}>
+                                            {formatCurrency(stage.value)}
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* Kanban Board */}
+                    <div style={styles.card}>
+                        <div style={styles.cardHeader}>
+                            <span style={styles.cardTitle}>🎯 Pipeline Kanban</span>
+                            <span style={{ fontSize: 12, color: '#71717a' }}>Drag cards to change stage</span>
+                        </div>
+                        <div style={{ padding: 16, overflowX: 'auto' }}>
+                            <div style={{ display: 'flex', gap: 12, minWidth: PIPELINE_STAGES.length * 220 }}>
+                                {PIPELINE_STAGES.map(stage => {
+                                    const stageDeals = filteredRestaurants.filter(r => r.stage === stage.id);
+                                    return (
+                                        <div 
+                                            key={stage.id}
+                                            style={{ 
+                                                flex: 1, 
+                                                minWidth: 200,
+                                                background: '#1f1f23', 
+                                                borderRadius: 8,
+                                                display: 'flex',
+                                                flexDirection: 'column'
+                                            }}
+                                            onDragOver={handleDragOver}
+                                            onDrop={(e) => handleDrop(e, stage.id)}
+                                        >
+                                            <div style={{ 
+                                                padding: '12px 16px', 
+                                                borderBottom: `2px solid ${stage.color}`,
+                                                display: 'flex',
+                                                justifyContent: 'space-between',
+                                                alignItems: 'center'
+                                            }}>
+                                                <span style={{ fontSize: 13, fontWeight: 600, color: stage.color }}>{stage.name}</span>
+                                                <span style={{ 
+                                                    background: stage.color + '33', 
+                                                    color: stage.color, 
+                                                    padding: '2px 8px', 
+                                                    borderRadius: 10, 
+                                                    fontSize: 11, 
+                                                    fontWeight: 600 
+                                                }}>{stageDeals.length}</span>
+                                            </div>
+                                            <div style={{ padding: 8, flex: 1, minHeight: 200, maxHeight: 500, overflowY: 'auto' }}>
+                                                {stageDeals.map(r => {
+                                                    const aging = getAgingStatus(r);
+                                                    const days = getDaysInStage(r);
+                                                    return (
+                                                        <div 
+                                                            key={r.id}
+                                                            draggable
+                                                            onDragStart={(e) => handleDragStart(e, r)}
+                                                            onDragEnd={handleDragEnd}
+                                                            onClick={() => onEdit(r)}
+                                                            style={{ 
+                                                                background: '#27272a', 
+                                                                borderRadius: 6, 
+                                                                padding: 12, 
+                                                                marginBottom: 8,
+                                                                cursor: 'grab',
+                                                                borderLeft: `3px solid ${aging === 'overdue' ? '#ef4444' : aging === 'warning' ? '#f59e0b' : '#3f3f46'}`,
+                                                                opacity: draggedItem?.id === r.id ? 0.5 : 1
+                                                            }}
+                                                        >
+                                                            <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 6 }}>{r.name}</div>
+                                                            {r.group && <div style={{ fontSize: 11, color: '#71717a', marginBottom: 6 }}>{r.group}</div>}
+                                                            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', fontSize: 10 }}>
+                                                                {days !== null && (
+                                                                    <span style={{ 
+                                                                        background: aging === 'overdue' ? '#ef444433' : aging === 'warning' ? '#f59e0b33' : '#3f3f46',
+                                                                        color: aging === 'overdue' ? '#ef4444' : aging === 'warning' ? '#f59e0b' : '#a1a1aa',
+                                                                        padding: '2px 6px', 
+                                                                        borderRadius: 4 
+                                                                    }}>
+                                                                        {days}d
+                                                                    </span>
+                                                                )}
+                                                                {r.tables && (
+                                                                    <span style={{ background: '#3f3f46', padding: '2px 6px', borderRadius: 4, color: '#a1a1aa' }}>
+                                                                        {r.tables} tables
+                                                                    </span>
+                                                                )}
+                                                                {r.targetMonthlyFee && (
+                                                                    <span style={{ background: '#3b82f633', padding: '2px 6px', borderRadius: 4, color: '#3b82f6' }}>
+                                                                        {formatCurrency(parseFloat(r.targetMonthlyFee))}/mo
+                                                                    </span>
+                                                                )}
+                                                            </div>
+                                                            {r.nextContact && (
+                                                                <div style={{ fontSize: 10, color: '#71717a', marginTop: 6 }}>
+                                                                    📅 {new Date(r.nextContact).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}
+                                                                </div>
+                                                            )}
+                                                        </div>
+                                                    );
+                                                })}
+                                                {stageDeals.length === 0 && (
+                                                    <div style={{ color: '#52525b', fontSize: 12, textAlign: 'center', padding: 20 }}>
+                                                        No deals
+                                                    </div>
+                                                )}
+                                            </div>
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            );
+        };
+
+        // Restaurant List Component
+        const RestaurantList = ({ restaurants, contacts, search, filter, onEdit, onDelete }) => {
+            const filtered = useMemo(() => {
+                let result = [...restaurants];
+                if (search) {
+                    const s = search.toLowerCase();
+                    result = result.filter(r => 
+                        r.name.toLowerCase().includes(s) || 
+                        r.contact?.toLowerCase().includes(s) ||
+                        r.group?.toLowerCase().includes(s)
+                    );
+                }
+                if (filter) {
+                    result = result.filter(r => r.stage === filter);
+                }
+                return result.sort((a, b) => {
+                    // Sort by next contact date - soonest first, no date at end
+                    const aDate = a.nextContact ? new Date(a.nextContact) : new Date('9999-12-31');
+                    const bDate = b.nextContact ? new Date(b.nextContact) : new Date('9999-12-31');
+                    return aDate - bDate;
+                });
+            }, [restaurants, search, filter]);
+            
+            const getContactNames = (contactIds) => {
+                if (!contactIds || contactIds.length === 0) return null;
+                return contactIds.map(id => contacts.find(c => c.id === id)).filter(Boolean);
+            };
+
+            return (
+                <div style={styles.card}>
+                    <table style={styles.table}>
+                        <thead>
+                            <tr>
+                                <th style={styles.th}>Restaurant</th>
+                                <th style={styles.th}>Stage</th>
+                                <th style={styles.th}>Contacts</th>
+                                <th style={styles.th}>Next Contact</th>
+                                <th style={styles.th}>Booking</th>
+                                <th style={styles.th}>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {filtered.length === 0 ? (
+                                <tr><td colSpan="6" style={{ ...styles.td, textAlign: 'center', color: '#71717a', padding: 40 }}>No restaurants found</td></tr>
+                            ) : filtered.map(r => {
+                                const linkedContacts = getContactNames(r.contactIds);
+                                return (
+                                <tr key={r.id} style={{ cursor: 'pointer' }} onClick={() => onEdit(r)}>
+                                    <td style={styles.td}>
+                                        <div style={{ fontWeight: 600 }}>{r.name}</div>
+                                        {r.group && <div style={{ fontSize: 12, color: '#71717a' }}>{r.group}</div>}
+                                    </td>
+                                    <td style={styles.td}><StageBadge stage={r.stage} /></td>
+                                    <td style={styles.td}>
+                                        {linkedContacts && linkedContacts.length > 0 ? (
+                                            <div>
+                                                <div style={{ fontWeight: 500 }}>{linkedContacts[0].name}</div>
+                                                <div style={{ fontSize: 12, color: '#71717a' }}>
+                                                    {linkedContacts[0].role}
+                                                    {linkedContacts.length > 1 && ` +${linkedContacts.length - 1} more`}
+                                                </div>
+                                            </div>
+                                        ) : (
+                                            // Legacy support for old contact field
+                                            r.contact ? (
+                                                <div>
+                                                    <div style={{ fontWeight: 500 }}>{r.contact}</div>
+                                                    {r.contactRole && <div style={{ fontSize: 12, color: '#71717a' }}>{r.contactRole}</div>}
+                                                </div>
+                                            ) : <span style={{ color: '#71717a' }}>—</span>
+                                        )}
+                                    </td>
+                                    <td style={styles.td}>
+                                        {r.nextContact ? (
+                                            (() => {
+                                                const today = new Date();
+                                                today.setHours(0, 0, 0, 0);
+                                                const nextDate = new Date(r.nextContact);
+                                                const isOverdue = nextDate < today;
+                                                const isToday = nextDate.getTime() === today.getTime();
+                                                return (
+                                                    <>
+                                                        <div style={{ color: isOverdue ? '#ef4444' : isToday ? '#eab308' : 'inherit' }}>{r.nextContact}</div>
+                                                        <div style={{ fontSize: 12, color: '#71717a', textTransform: 'capitalize' }}>{r.nextContactType}</div>
+                                                    </>
+                                                );
+                                            })()
+                                        ) : <span style={{ color: '#71717a' }}>—</span>}
+                                    </td>
+                                    <td style={styles.td}>{r.bookingSystem || '—'}</td>
+                                    <td style={styles.td} onClick={e => e.stopPropagation()}>
+                                        <div style={{ display: 'flex', gap: 8 }}>
+                                            <button style={{ ...styles.btn, ...styles.btnSecondary, padding: '6px 10px' }} onClick={() => onEdit(r)}><Icon name="edit" size={14} /></button>
+                                            <button style={{ ...styles.btn, ...styles.btnSecondary, padding: '6px 10px' }} onClick={() => onDelete(r.id)}><Icon name="trash" size={14} /></button>
+                                        </div>
+                                    </td>
+                                </tr>
+                            )})}
+                        </tbody>
+                    </table>
+                </div>
+            );
+        };
+
+        // Restaurant Form Modal
+        const RestaurantModal = ({ restaurant, contacts, onSave, onSaveContact, onClose }) => {
+            const [form, setForm] = useState(restaurant || {
+                name: '', group: '', stage: 'identified', stageEnteredDate: new Date().toISOString().split('T')[0],
+                contact: '', contactRole: '', email: '', phone: '', mobile: '',
+                website: '', postcode: '', tables: '', targetMonthlyFee: '',
+                bookingSystem: '', trialDate: '', integrations: '', channels: '',
+                nextContact: '', nextContactType: '', notes: '', contactIds: [],
+                rejectionReason: '', rejectionDate: '', notesHistory: []
+            });
+            
+            // For adding new contact inline
+            const [showNewContact, setShowNewContact] = useState(false);
+            const [newContact, setNewContact] = useState({ name: '', role: '', email: '', phone: '', mobile: '' });
+
+            const handleChange = (field, value) => setForm(prev => ({ ...prev, [field]: value }));
+
+            const handleSubmit = () => {
+                if (!form.name.trim()) return alert('Restaurant name is required');
+                onSave({ ...form, id: form.id || Date.now().toString() });
+            };
+            
+            const toggleContact = (contactId) => {
+                const current = form.contactIds || [];
+                if (current.includes(contactId)) {
+                    handleChange('contactIds', current.filter(id => id !== contactId));
+                } else {
+                    handleChange('contactIds', [...current, contactId]);
+                }
+            };
+            
+            const handleAddNewContact = () => {
+                if (!newContact.name) return alert('Contact name is required');
+                const contactId = Date.now().toString();
+                const contact = {
+                    id: contactId,
+                    ...newContact,
+                    linkedIn: '',
+                    restaurantIds: [],
+                    notesHistory: []
+                };
+                onSaveContact(contact);
+                handleChange('contactIds', [...(form.contactIds || []), contactId]);
+                setNewContact({ name: '', role: '', email: '', phone: '', mobile: '' });
+                setShowNewContact(false);
+            };
+
+            return (
+                <div style={styles.modal} onClick={onClose}>
+                    <div style={styles.modalContent} onClick={e => e.stopPropagation()}>
+                        <div style={styles.modalHeader}>
+                            <h2 style={{ fontSize: 18, fontWeight: 600 }}>{restaurant ? 'Edit Restaurant' : 'Add Restaurant'}</h2>
+                            <button style={{ background: 'none', border: 'none', color: '#71717a', cursor: 'pointer' }} onClick={onClose}><Icon name="x" /></button>
+                        </div>
+                        <div style={styles.modalBody}>
+                            <div style={styles.formSection}>
+                                <div style={styles.formSectionTitle}>🍽️ Restaurant Info</div>
+                                <div style={styles.formGrid}>
+                                    <div style={styles.formGroup}>
+                                        <label style={styles.formLabel}>Name *</label>
+                                        <input style={styles.formInput} value={form.name} onChange={e => handleChange('name', e.target.value)} placeholder="Restaurant name" />
+                                    </div>
+                                    <div style={styles.formGroup}>
+                                        <label style={styles.formLabel}>Group/Chain</label>
+                                        <input style={styles.formInput} value={form.group} onChange={e => handleChange('group', e.target.value)} placeholder="Parent company" />
+                                    </div>
+                                    <div style={styles.formGroup}>
+                                        <label style={styles.formLabel}>Primary Contact</label>
+                                        <input style={styles.formInput} value={form.contact} onChange={e => handleChange('contact', e.target.value)} placeholder="John Smith" />
+                                    </div>
+                                    <div style={styles.formGroup}>
+                                        <label style={styles.formLabel}>Contact Role</label>
+                                        <input style={styles.formInput} value={form.contactRole} onChange={e => handleChange('contactRole', e.target.value)} placeholder="Owner, Manager..." />
+                                    </div>
+                                    <div style={styles.formGroup}>
+                                        <label style={styles.formLabel}>Email</label>
+                                        <input style={styles.formInput} type="email" value={form.email} onChange={e => handleChange('email', e.target.value)} placeholder="email@restaurant.com" />
+                                    </div>
+                                    <div style={styles.formGroup}>
+                                        <label style={styles.formLabel}>Phone</label>
+                                        <input style={styles.formInput} value={form.phone} onChange={e => handleChange('phone', e.target.value)} placeholder="+44 20..." />
+                                    </div>
+                                    <div style={styles.formGroup}>
+                                        <label style={styles.formLabel}>Mobile</label>
+                                        <input style={styles.formInput} value={form.mobile} onChange={e => handleChange('mobile', e.target.value)} placeholder="+44 7..." />
+                                    </div>
+                                    <div style={styles.formGroup}>
+                                        <label style={styles.formLabel}>Website</label>
+                                        <input style={styles.formInput} value={form.website} onChange={e => handleChange('website', e.target.value)} placeholder="website.com" />
+                                    </div>
+                                    <div style={styles.formGroup}>
+                                        <label style={styles.formLabel}>Postcode</label>
+                                        <input style={styles.formInput} value={form.postcode} onChange={e => handleChange('postcode', e.target.value)} placeholder="SW1A 1AA" />
+                                    </div>
+                                    <div style={styles.formGroup}>
+                                        <label style={styles.formLabel}>Tables</label>
+                                        <input style={styles.formInput} type="number" value={form.tables} onChange={e => handleChange('tables', e.target.value)} placeholder="25" />
+                                    </div>
+                                    <div style={styles.formGroup}>
+                                        <label style={styles.formLabel}>Target Monthly Fee (£)</label>
+                                        <input style={styles.formInput} type="number" value={form.targetMonthlyFee} onChange={e => handleChange('targetMonthlyFee', e.target.value)} placeholder="500" />
+                                    </div>
+                                    <div style={styles.formGroup}>
+                                        <label style={styles.formLabel}>Booking System</label>
+                                        <select style={styles.formInput} value={form.bookingSystem} onChange={e => handleChange('bookingSystem', e.target.value)}>
+                                            <option value="">Select...</option>
+                                            {BOOKING_SYSTEMS.map(bs => <option key={bs} value={bs}>{bs}</option>)}
+                                        </select>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div style={styles.formSection}>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+                                    <div style={styles.formSectionTitle}>👤 Contacts</div>
+                                    <button 
+                                        style={{ ...styles.btn, ...styles.btnSecondary, padding: '4px 12px', fontSize: 12 }}
+                                        onClick={() => setShowNewContact(!showNewContact)}
+                                    >
+                                        <Icon name="plus" size={12} /> New Contact
+                                    </button>
+                                </div>
+                                
+                                {showNewContact && (
+                                    <div style={{ background: '#18181b', borderRadius: 8, padding: 12, marginBottom: 12, border: '1px solid #f97316' }}>
+                                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+                                            <input style={{ ...styles.formInput, fontSize: 13 }} value={newContact.name} onChange={e => setNewContact({...newContact, name: e.target.value})} placeholder="Name *" />
+                                            <input style={{ ...styles.formInput, fontSize: 13 }} value={newContact.role} onChange={e => setNewContact({...newContact, role: e.target.value})} placeholder="Role" />
+                                            <input style={{ ...styles.formInput, fontSize: 13 }} value={newContact.email} onChange={e => setNewContact({...newContact, email: e.target.value})} placeholder="Email" />
+                                            <input style={{ ...styles.formInput, fontSize: 13 }} value={newContact.mobile} onChange={e => setNewContact({...newContact, mobile: e.target.value})} placeholder="Mobile" />
+                                        </div>
+                                        <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+                                            <button style={{ ...styles.btn, ...styles.btnPrimary, padding: '6px 12px', fontSize: 12 }} onClick={handleAddNewContact}>Add Contact</button>
+                                            <button style={{ ...styles.btn, ...styles.btnSecondary, padding: '6px 12px', fontSize: 12 }} onClick={() => setShowNewContact(false)}>Cancel</button>
+                                        </div>
+                                    </div>
+                                )}
+                                
+                                <div style={{ maxHeight: 150, overflowY: 'auto', background: '#18181b', borderRadius: 8, border: '1px solid #27272a' }}>
+                                    {contacts.length === 0 ? (
+                                        <div style={{ padding: 16, textAlign: 'center', color: '#71717a', fontSize: 13 }}>No contacts yet. Add one above.</div>
+                                    ) : contacts.map(c => (
+                                        <div 
+                                            key={c.id} 
+                                            style={{ 
+                                                padding: '10px 16px', 
+                                                borderBottom: '1px solid #27272a',
+                                                display: 'flex',
+                                                alignItems: 'center',
+                                                gap: 12,
+                                                cursor: 'pointer',
+                                                background: (form.contactIds || []).includes(c.id) ? 'rgba(249,115,22,0.1)' : 'transparent'
+                                            }}
+                                            onClick={() => toggleContact(c.id)}
+                                        >
+                                            <div style={{
+                                                width: 18,
+                                                height: 18,
+                                                borderRadius: 4,
+                                                border: '2px solid',
+                                                borderColor: (form.contactIds || []).includes(c.id) ? '#f97316' : '#3f3f46',
+                                                background: (form.contactIds || []).includes(c.id) ? '#f97316' : 'transparent',
+                                                display: 'flex',
+                                                alignItems: 'center',
+                                                justifyContent: 'center',
+                                                flexShrink: 0
+                                            }}>
+                                                {(form.contactIds || []).includes(c.id) && <Icon name="check" size={12} />}
+                                            </div>
+                                            <div style={{ flex: 1, minWidth: 0 }}>
+                                                <div style={{ fontWeight: 500, fontSize: 13 }}>{c.name}</div>
+                                                <div style={{ fontSize: 11, color: '#71717a', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.role}{c.email && ` • ${c.email}`}</div>
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+
+                            <div style={styles.formSection}>
+                                <div style={styles.formSectionTitle}>📈 Pipeline Status</div>
+                                <div style={styles.formGrid}>
+                                    <div style={styles.formGroup}>
+                                        <label style={styles.formLabel}>Stage</label>
+                                        <select style={styles.formInput} value={form.stage} onChange={e => {
+                                            const newStage = e.target.value;
+                                            handleChange('stage', newStage);
+                                            // Auto-set stageEnteredDate when stage changes
+                                            if (newStage !== restaurant?.stage) {
+                                                handleChange('stageEnteredDate', new Date().toISOString().split('T')[0]);
+                                            }
+                                        }}>
+                                            {STAGES.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                                        </select>
+                                    </div>
+                                    <div style={styles.formGroup}>
+                                        <label style={styles.formLabel}>Stage Entered Date</label>
+                                        <input style={styles.formInput} type="date" value={form.stageEnteredDate || ''} onChange={e => handleChange('stageEnteredDate', e.target.value)} />
+                                    </div>
+                                    <div style={styles.formGroup}>
+                                        <label style={styles.formLabel}>Target Monthly Fee (£)</label>
+                                        <input style={styles.formInput} type="number" value={form.targetMonthlyFee || ''} onChange={e => handleChange('targetMonthlyFee', e.target.value)} placeholder="e.g. 500" />
+                                    </div>
+                                    <div style={styles.formGroup}>
+                                        <label style={styles.formLabel}>Trial Start Date</label>
+                                        <input style={styles.formInput} type="date" value={form.trialDate} onChange={e => handleChange('trialDate', e.target.value)} />
+                                    </div>
+                                    <div style={styles.formGroup}>
+                                        <label style={styles.formLabel}>Integrations</label>
+                                        <input style={styles.formInput} value={form.integrations} onChange={e => handleChange('integrations', e.target.value)} placeholder="OpenTable, POS..." />
+                                    </div>
+                                    <div style={styles.formGroup}>
+                                        <label style={styles.formLabel}>Channels</label>
+                                        <input style={styles.formInput} value={form.channels} onChange={e => handleChange('channels', e.target.value)} placeholder="Phone, WhatsApp..." />
+                                    </div>
+                                    {form.stage === 'lost' && (
+                                        <div style={{ ...styles.formGroup, gridColumn: 'span 2' }}>
+                                            <label style={{ ...styles.formLabel, color: '#ef4444' }}>Rejection Reason *</label>
+                                            <select style={styles.formInput} value={form.rejectedReason} onChange={e => handleChange('rejectedReason', e.target.value)}>
+                                                <option value="">Select reason...</option>
+                                                <option value="not_interested">Not Interested</option>
+                                                <option value="budget">Budget Constraints</option>
+                                                <option value="timing">Bad Timing</option>
+                                                <option value="competitor">Using Competitor</option>
+                                                <option value="no_response">No Response / Ghosted</option>
+                                                <option value="wrong_fit">Not a Good Fit</option>
+                                                <option value="closed">Business Closed</option>
+                                                <option value="other">Other</option>
+                                            </select>
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+
+                            <div style={styles.formSection}>
+                                <div style={styles.formSectionTitle}>📅 Next Contact</div>
+                                <div style={styles.formGrid}>
+                                    <div style={styles.formGroup}>
+                                        <label style={styles.formLabel}>Date</label>
+                                        <input style={styles.formInput} type="date" value={form.nextContact} onChange={e => handleChange('nextContact', e.target.value)} />
+                                    </div>
+                                    <div style={styles.formGroup}>
+                                        <label style={styles.formLabel}>Type</label>
+                                        <select style={styles.formInput} value={form.nextContactType} onChange={e => handleChange('nextContactType', e.target.value)}>
+                                            <option value="">Select...</option>
+                                            <option value="call">Call</option>
+                                            <option value="email">Email</option>
+                                            <option value="meeting">Meeting</option>
+                                            <option value="demo">Demo</option>
+                                        </select>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div style={styles.formSection}>
+                                <div style={styles.formSectionTitle}>📝 Notes & History</div>
+                                <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
+                                    <input 
+                                        style={{ ...styles.formInput, flex: 1 }} 
+                                        value={form.newNote || ''} 
+                                        onChange={e => handleChange('newNote', e.target.value)} 
+                                        placeholder="Add a new note..." 
+                                        onKeyPress={e => {
+                                            if (e.key === 'Enter' && form.newNote?.trim()) {
+                                                const newEntry = {
+                                                    id: Date.now().toString(),
+                                                    date: new Date().toISOString().split('T')[0],
+                                                    text: form.newNote.trim()
+                                                };
+                                                handleChange('notesHistory', [...(form.notesHistory || []), newEntry]);
+                                                handleChange('newNote', '');
+                                            }
+                                        }}
+                                    />
+                                    <button 
+                                        style={{ ...styles.btn, ...styles.btnPrimary, padding: '8px 16px' }}
+                                        onClick={() => {
+                                            if (form.newNote?.trim()) {
+                                                const newEntry = {
+                                                    id: Date.now().toString(),
+                                                    date: new Date().toISOString().split('T')[0],
+                                                    text: form.newNote.trim()
+                                                };
+                                                handleChange('notesHistory', [...(form.notesHistory || []), newEntry]);
+                                                handleChange('newNote', '');
+                                            }
+                                        }}
+                                    >
+                                        <Icon name="plus" size={14} /> Add
+                                    </button>
+                                </div>
+                                <div style={{ maxHeight: 200, overflowY: 'auto', background: '#18181b', borderRadius: 8, border: '1px solid #27272a' }}>
+                                    {(!form.notesHistory || form.notesHistory.length === 0) ? (
+                                        <div style={{ padding: 20, textAlign: 'center', color: '#71717a', fontSize: 13 }}>No notes yet</div>
+                                    ) : (
+                                        [...form.notesHistory].reverse().map((note, idx) => (
+                                            <div key={note.id} style={{ 
+                                                padding: '12px 16px', 
+                                                borderBottom: idx < form.notesHistory.length - 1 ? '1px solid #27272a' : 'none',
+                                                display: 'flex',
+                                                gap: 12,
+                                                alignItems: 'flex-start'
+                                            }}>
+                                                <div style={{ 
+                                                    fontSize: 11, 
+                                                    color: '#71717a', 
+                                                    whiteSpace: 'nowrap',
+                                                    background: '#27272a',
+                                                    padding: '2px 8px',
+                                                    borderRadius: 4,
+                                                    marginTop: 2
+                                                }}>{note.date}</div>
+                                                <div style={{ flex: 1, fontSize: 13, lineHeight: 1.5 }}>{note.text}</div>
+                                                <button 
+                                                    style={{ background: 'none', border: 'none', color: '#71717a', cursor: 'pointer', padding: 4 }}
+                                                    onClick={() => {
+                                                        handleChange('notesHistory', form.notesHistory.filter(n => n.id !== note.id));
+                                                    }}
+                                                >
+                                                    <Icon name="x" size={12} />
+                                                </button>
+                                            </div>
+                                        ))
+                                    )}
+                                </div>
+                                {/* Legacy notes field - hidden but preserved */}
+                                {form.notes && (
+                                    <div style={{ marginTop: 12, padding: 12, background: '#27272a', borderRadius: 8, fontSize: 12 }}>
+                                        <div style={{ color: '#71717a', marginBottom: 4 }}>📋 Initial notes (imported):</div>
+                                        <div style={{ color: '#a1a1aa' }}>{form.notes}</div>
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+                        <div style={styles.modalFooter}>
+                            <button style={{ ...styles.btn, ...styles.btnSecondary }} onClick={onClose}>Cancel</button>
+                            <button style={{ ...styles.btn, ...styles.btnPrimary }} onClick={handleSubmit}>
+                                <Icon name="check" size={16} /> Save Restaurant
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            );
+        };
+
+        // Contact Modal Component
+        const ContactModal = ({ contact, restaurants, onSave, onClose }) => {
+            const [form, setForm] = useState(contact || {
+                name: '', role: '', email: '', phone: '', mobile: '', linkedIn: '',
+                restaurantIds: [], notesHistory: [], isPrimary: false
+            });
+
+            const handleChange = (field, value) => setForm(prev => ({ ...prev, [field]: value }));
+
+            const handleSubmit = () => {
+                if (!form.name) return alert('Contact name is required');
+                onSave({ ...form, id: form.id || Date.now().toString() });
+            };
+
+            const toggleRestaurant = (restaurantId) => {
+                const current = form.restaurantIds || [];
+                if (current.includes(restaurantId)) {
+                    handleChange('restaurantIds', current.filter(id => id !== restaurantId));
+                } else {
+                    handleChange('restaurantIds', [...current, restaurantId]);
+                }
+            };
+
+            return (
+                <div style={styles.modalOverlay}>
+                    <div style={{ ...styles.modal, maxWidth: 600 }}>
+                        <div style={styles.modalHeader}>
+                            <h2 style={styles.modalTitle}>{contact?.id ? 'Edit Contact' : 'Add Contact'}</h2>
+                            <button style={styles.modalClose} onClick={onClose}><Icon name="x" /></button>
+                        </div>
+                        <div style={styles.modalBody}>
+                            <div style={styles.formSection}>
+                                <div style={styles.formSectionTitle}>👤 Contact Information</div>
+                                <div style={styles.formGrid}>
+                                    <div style={styles.formGroup}>
+                                        <label style={styles.formLabel}>Name *</label>
+                                        <input style={styles.formInput} value={form.name} onChange={e => handleChange('name', e.target.value)} placeholder="John Smith" />
+                                    </div>
+                                    <div style={styles.formGroup}>
+                                        <label style={styles.formLabel}>Role</label>
+                                        <input style={styles.formInput} value={form.role} onChange={e => handleChange('role', e.target.value)} placeholder="General Manager" />
+                                    </div>
+                                    <div style={styles.formGroup}>
+                                        <label style={styles.formLabel}>Email</label>
+                                        <input style={styles.formInput} type="email" value={form.email} onChange={e => handleChange('email', e.target.value)} placeholder="john@restaurant.com" />
+                                    </div>
+                                    <div style={styles.formGroup}>
+                                        <label style={styles.formLabel}>Phone</label>
+                                        <input style={styles.formInput} value={form.phone} onChange={e => handleChange('phone', e.target.value)} placeholder="+44 20..." />
+                                    </div>
+                                    <div style={styles.formGroup}>
+                                        <label style={styles.formLabel}>Mobile</label>
+                                        <input style={styles.formInput} value={form.mobile} onChange={e => handleChange('mobile', e.target.value)} placeholder="+44 7..." />
+                                    </div>
+                                    <div style={styles.formGroup}>
+                                        <label style={styles.formLabel}>LinkedIn</label>
+                                        <input style={styles.formInput} value={form.linkedIn} onChange={e => handleChange('linkedIn', e.target.value)} placeholder="linkedin.com/in/..." />
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div style={styles.formSection}>
+                                <div style={styles.formSectionTitle}>🍽️ Associated Restaurants</div>
+                                <div style={{ maxHeight: 150, overflowY: 'auto', background: '#18181b', borderRadius: 8, border: '1px solid #27272a' }}>
+                                    {restaurants.length === 0 ? (
+                                        <div style={{ padding: 16, textAlign: 'center', color: '#71717a', fontSize: 13 }}>No restaurants available</div>
+                                    ) : restaurants.map(r => (
+                                        <div 
+                                            key={r.id} 
+                                            style={{ 
+                                                padding: '10px 16px', 
+                                                borderBottom: '1px solid #27272a',
+                                                display: 'flex',
+                                                alignItems: 'center',
+                                                gap: 12,
+                                                cursor: 'pointer',
+                                                background: (form.restaurantIds || []).includes(r.id) ? 'rgba(249,115,22,0.1)' : 'transparent'
+                                            }}
+                                            onClick={() => toggleRestaurant(r.id)}
+                                        >
+                                            <div style={{
+                                                width: 18,
+                                                height: 18,
+                                                borderRadius: 4,
+                                                border: '2px solid',
+                                                borderColor: (form.restaurantIds || []).includes(r.id) ? '#f97316' : '#3f3f46',
+                                                background: (form.restaurantIds || []).includes(r.id) ? '#f97316' : 'transparent',
+                                                display: 'flex',
+                                                alignItems: 'center',
+                                                justifyContent: 'center'
+                                            }}>
+                                                {(form.restaurantIds || []).includes(r.id) && <Icon name="check" size={12} />}
+                                            </div>
+                                            <div style={{ flex: 1 }}>
+                                                <div style={{ fontWeight: 500, fontSize: 13 }}>{r.name}</div>
+                                                {r.group && <div style={{ fontSize: 11, color: '#71717a' }}>{r.group}</div>}
+                                            </div>
+                                            <StageBadge stage={r.stage} />
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+
+                            <div style={styles.formSection}>
+                                <div style={styles.formSectionTitle}>📝 Notes & History</div>
+                                <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
+                                    <input 
+                                        style={{ ...styles.formInput, flex: 1 }} 
+                                        value={form.newNote || ''} 
+                                        onChange={e => handleChange('newNote', e.target.value)} 
+                                        placeholder="Add a new note..." 
+                                        onKeyPress={e => {
+                                            if (e.key === 'Enter' && form.newNote?.trim()) {
+                                                const newEntry = {
+                                                    id: Date.now().toString(),
+                                                    date: new Date().toISOString().split('T')[0],
+                                                    text: form.newNote.trim()
+                                                };
+                                                handleChange('notesHistory', [...(form.notesHistory || []), newEntry]);
+                                                handleChange('newNote', '');
+                                            }
+                                        }}
+                                    />
+                                    <button 
+                                        style={{ ...styles.btn, ...styles.btnPrimary, padding: '8px 16px' }}
+                                        onClick={() => {
+                                            if (form.newNote?.trim()) {
+                                                const newEntry = {
+                                                    id: Date.now().toString(),
+                                                    date: new Date().toISOString().split('T')[0],
+                                                    text: form.newNote.trim()
+                                                };
+                                                handleChange('notesHistory', [...(form.notesHistory || []), newEntry]);
+                                                handleChange('newNote', '');
+                                            }
+                                        }}
+                                    >
+                                        <Icon name="plus" size={14} /> Add
+                                    </button>
+                                </div>
+                                <div style={{ maxHeight: 150, overflowY: 'auto', background: '#18181b', borderRadius: 8, border: '1px solid #27272a' }}>
+                                    {(!form.notesHistory || form.notesHistory.length === 0) ? (
+                                        <div style={{ padding: 16, textAlign: 'center', color: '#71717a', fontSize: 13 }}>No notes yet</div>
+                                    ) : (
+                                        [...form.notesHistory].reverse().map((note, idx) => (
+                                            <div key={note.id} style={{ 
+                                                padding: '10px 16px', 
+                                                borderBottom: idx < form.notesHistory.length - 1 ? '1px solid #27272a' : 'none',
+                                                display: 'flex',
+                                                gap: 12,
+                                                alignItems: 'flex-start'
+                                            }}>
+                                                <div style={{ 
+                                                    fontSize: 10, 
+                                                    color: '#71717a', 
+                                                    whiteSpace: 'nowrap',
+                                                    background: '#27272a',
+                                                    padding: '2px 6px',
+                                                    borderRadius: 4,
+                                                    marginTop: 2
+                                                }}>{note.date}</div>
+                                                <div style={{ flex: 1, fontSize: 12, lineHeight: 1.4 }}>{note.text}</div>
+                                                <button 
+                                                    style={{ background: 'none', border: 'none', color: '#71717a', cursor: 'pointer', padding: 4 }}
+                                                    onClick={() => handleChange('notesHistory', form.notesHistory.filter(n => n.id !== note.id))}
+                                                >
+                                                    <Icon name="x" size={12} />
+                                                </button>
+                                            </div>
+                                        ))
+                                    )}
+                                </div>
+                            </div>
+                        </div>
+                        <div style={styles.modalFooter}>
+                            <button style={{ ...styles.btn, ...styles.btnSecondary }} onClick={onClose}>Cancel</button>
+                            <button style={{ ...styles.btn, ...styles.btnPrimary }} onClick={handleSubmit}>
+                                <Icon name="check" size={16} /> Save Contact
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            );
+        };
+
+        // Contact List Component
+        const ContactList = ({ contacts, restaurants, search, onEdit, onDelete }) => {
+            const filtered = useMemo(() => {
+                let result = [...contacts];
+                if (search) {
+                    const s = search.toLowerCase();
+                    result = result.filter(c => 
+                        c.name?.toLowerCase().includes(s) || 
+                        c.email?.toLowerCase().includes(s) ||
+                        c.role?.toLowerCase().includes(s)
+                    );
+                }
+                return result.sort((a, b) => a.name?.localeCompare(b.name));
+            }, [contacts, search]);
+
+            const getRestaurantNames = (restaurantIds) => {
+                if (!restaurantIds || restaurantIds.length === 0) return [];
+                return restaurantIds.map(id => restaurants.find(r => r.id === id)?.name).filter(Boolean);
+            };
+
+            return (
+                <div style={styles.card}>
+                    <table style={styles.table}>
+                        <thead>
+                            <tr>
+                                <th style={styles.th}>Contact</th>
+                                <th style={styles.th}>Role</th>
+                                <th style={styles.th}>Email / Phone</th>
+                                <th style={styles.th}>Restaurants</th>
+                                <th style={styles.th}>Notes</th>
+                                <th style={styles.th}>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {filtered.length === 0 ? (
+                                <tr><td colSpan="6" style={{ ...styles.td, textAlign: 'center', color: '#71717a', padding: 40 }}>No contacts found</td></tr>
+                            ) : filtered.map(c => (
+                                <tr key={c.id} style={{ cursor: 'pointer' }} onClick={() => onEdit(c)}>
+                                    <td style={styles.td}>
+                                        <div style={{ fontWeight: 600 }}>{c.name}</div>
+                                    </td>
+                                    <td style={styles.td}>
+                                        <span style={{ color: '#a1a1aa' }}>{c.role || '—'}</span>
+                                    </td>
+                                    <td style={styles.td}>
+                                        {c.email && <div style={{ fontSize: 13 }}>{c.email}</div>}
+                                        {c.mobile && <div style={{ fontSize: 12, color: '#71717a' }}>{c.mobile}</div>}
+                                        {!c.email && !c.mobile && <span style={{ color: '#71717a' }}>—</span>}
+                                    </td>
+                                    <td style={styles.td}>
+                                        {(() => {
+                                            const names = getRestaurantNames(c.restaurantIds);
+                                            if (names.length === 0) return <span style={{ color: '#71717a' }}>—</span>;
+                                            return (
+                                                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                                                    {names.slice(0, 2).map((name, i) => (
+                                                        <span key={i} style={{ 
+                                                            background: '#27272a', 
+                                                            padding: '2px 8px', 
+                                                            borderRadius: 4, 
+                                                            fontSize: 11 
+                                                        }}>{name}</span>
+                                                    ))}
+                                                    {names.length > 2 && (
+                                                        <span style={{ 
+                                                            background: '#27272a', 
+                                                            padding: '2px 8px', 
+                                                            borderRadius: 4, 
+                                                            fontSize: 11,
+                                                            color: '#71717a'
+                                                        }}>+{names.length - 2}</span>
+                                                    )}
+                                                </div>
+                                            );
+                                        })()}
+                                    </td>
+                                    <td style={styles.td}>
+                                        <span style={{ 
+                                            background: '#27272a', 
+                                            padding: '2px 8px', 
+                                            borderRadius: 4, 
+                                            fontSize: 11 
+                                        }}>{c.notesHistory?.length || 0} notes</span>
+                                    </td>
+                                    <td style={styles.td} onClick={e => e.stopPropagation()}>
+                                        <div style={{ display: 'flex', gap: 8 }}>
+                                            <button style={{ ...styles.btn, ...styles.btnSecondary, padding: '6px 10px' }} onClick={() => onEdit(c)}><Icon name="edit" size={14} /></button>
+                                            <button style={{ ...styles.btn, ...styles.btnSecondary, padding: '6px 10px' }} onClick={() => onDelete(c.id)}><Icon name="trash" size={14} /></button>
+                                        </div>
+                                    </td>
+                                </tr>
+                            ))}
+                        </tbody>
+                    </table>
+                </div>
+            );
+        };
+
+        // Main App
+        const App = () => {
+            const [page, setPage] = useState('dashboard');
+            const [restaurants, setRestaurants] = useState([]);
+            const [contacts, setContacts] = useState([]);
+            const [search, setSearch] = useState('');
+            const [filter, setFilter] = useState('');
+            const [modal, setModal] = useState(null);
+            const [contactModal, setContactModal] = useState(null);
+            const [loading, setLoading] = useState(true);
+            const [syncing, setSyncing] = useState(false);
+            const [lastSync, setLastSync] = useState(null);
+            const [error, setError] = useState(null);
+
+            // Load data from Google Sheets on mount
+            useEffect(() => {
+                const loadInitialData = async () => {
+                    setLoading(true);
+                    setError(null);
+                    try {
+                        const data = await sheetsAPI.loadAll();
+                        setRestaurants(data.restaurants || []);
+                        setContacts(data.contacts || []);
+                        setLastSync(new Date());
+                    } catch (err) {
+                        console.error('Load error:', err);
+                        setError(err.message);
+                    }
+                    setLoading(false);
+                };
+                loadInitialData();
+            }, []);
+
+            // Refresh data from Google Sheets
+            const handleRefresh = useCallback(async () => {
+                setSyncing(true);
+                setError(null);
+                try {
+                    const data = await sheetsAPI.loadAll();
+                    setRestaurants(data.restaurants || []);
+                    setContacts(data.contacts || []);
+                    setLastSync(new Date());
+                } catch (err) {
+                    console.error('Refresh error:', err);
+                    setError(err.message);
+                }
+                setSyncing(false);
+            }, []);
+
+            // Save restaurant and sync contact associations
+            const handleSave = async (restaurant) => {
+                const restaurantId = restaurant.id || Date.now().toString();
+                const savedRestaurant = { ...restaurant, id: restaurantId };
+                
+                // Update local state
+                setRestaurants(prev => {
+                    const exists = prev.find(r => r.id === savedRestaurant.id);
+                    if (exists) return prev.map(r => r.id === savedRestaurant.id ? savedRestaurant : r);
+                    return [...prev, savedRestaurant];
+                });
+                
+                // Sync contacts: update restaurantIds for all contacts
+                const updatedContacts = contacts.map(contact => {
+                    const isLinked = (savedRestaurant.contactIds || []).includes(contact.id);
+                    const hasRestaurant = (contact.restaurantIds || []).includes(restaurantId);
+                    
+                    if (isLinked && !hasRestaurant) {
+                        return { ...contact, restaurantIds: [...(contact.restaurantIds || []), restaurantId] };
+                    } else if (!isLinked && hasRestaurant) {
+                        return { ...contact, restaurantIds: (contact.restaurantIds || []).filter(id => id !== restaurantId) };
+                    }
+                    return contact;
+                });
+                setContacts(updatedContacts);
+                
+                // Save to Google Sheets
+                try {
+                    await sheetsAPI.saveRestaurant(savedRestaurant);
+                    // Save any updated contacts
+                    for (const contact of updatedContacts) {
+                        const original = contacts.find(c => c.id === contact.id);
+                        if (JSON.stringify(original?.restaurantIds) !== JSON.stringify(contact.restaurantIds)) {
+                            await sheetsAPI.saveContact(contact);
+                        }
+                    }
+                } catch (err) {
+                    console.error('Save error:', err);
+                    setError('Failed to save: ' + err.message);
+                }
+                
+                setModal(null);
+            };
+
+            // Save contact and sync restaurant associations
+            const handleSaveContact = async (contact, skipModalClose = false) => {
+                const contactId = contact.id || Date.now().toString();
+                const savedContact = { ...contact, id: contactId };
+                
+                // Update local state
+                setContacts(prev => {
+                    const exists = prev.find(c => c.id === savedContact.id);
+                    if (exists) return prev.map(c => c.id === savedContact.id ? savedContact : c);
+                    return [...prev, savedContact];
+                });
+                
+                // Sync restaurants: update contactIds for all restaurants
+                const updatedRestaurants = restaurants.map(restaurant => {
+                    const isLinked = (savedContact.restaurantIds || []).includes(restaurant.id);
+                    const hasContact = (restaurant.contactIds || []).includes(contactId);
+                    
+                    if (isLinked && !hasContact) {
+                        return { ...restaurant, contactIds: [...(restaurant.contactIds || []), contactId] };
+                    } else if (!isLinked && hasContact) {
+                        return { ...restaurant, contactIds: (restaurant.contactIds || []).filter(id => id !== contactId) };
+                    }
+                    return restaurant;
+                });
+                setRestaurants(updatedRestaurants);
+                
+                // Save to Google Sheets
+                try {
+                    await sheetsAPI.saveContact(savedContact);
+                    // Save any updated restaurants
+                    for (const restaurant of updatedRestaurants) {
+                        const original = restaurants.find(r => r.id === restaurant.id);
+                        if (JSON.stringify(original?.contactIds) !== JSON.stringify(restaurant.contactIds)) {
+                            await sheetsAPI.saveRestaurant(restaurant);
+                        }
+                    }
+                } catch (err) {
+                    console.error('Save error:', err);
+                    setError('Failed to save: ' + err.message);
+                }
+                
+                if (!skipModalClose) setContactModal(null);
+            };
+
+            const handleDelete = async (id) => {
+                if (confirm('Delete this restaurant?')) {
+                    setRestaurants(prev => prev.filter(r => r.id !== id));
+                    // Also remove from contacts' restaurantIds
+                    const updatedContacts = contacts.map(c => ({
+                        ...c,
+                        restaurantIds: (c.restaurantIds || []).filter(rid => rid !== id)
+                    }));
+                    setContacts(updatedContacts);
+                    
+                    // Delete from Google Sheets
+                    try {
+                        await sheetsAPI.deleteRestaurant(id);
+                        // Update contacts that had this restaurant
+                        for (const contact of updatedContacts) {
+                            const original = contacts.find(c => c.id === contact.id);
+                            if (original?.restaurantIds?.includes(id)) {
+                                await sheetsAPI.saveContact(contact);
+                            }
+                        }
+                    } catch (err) {
+                        console.error('Delete error:', err);
+                        setError('Failed to delete: ' + err.message);
+                    }
+                }
+            };
+
+            const handleDeleteContact = async (id) => {
+                if (confirm('Delete this contact?')) {
+                    setContacts(prev => prev.filter(c => c.id !== id));
+                    // Also remove from restaurants' contactIds
+                    const updatedRestaurants = restaurants.map(r => ({
+                        ...r,
+                        contactIds: (r.contactIds || []).filter(cid => cid !== id)
+                    }));
+                    setRestaurants(updatedRestaurants);
+                    
+                    // Delete from Google Sheets
+                    try {
+                        await sheetsAPI.deleteContact(id);
+                        // Update restaurants that had this contact
+                        for (const restaurant of updatedRestaurants) {
+                            const original = restaurants.find(r => r.id === restaurant.id);
+                            if (original?.contactIds?.includes(id)) {
+                                await sheetsAPI.saveRestaurant(restaurant);
+                            }
+                        }
+                    } catch (err) {
+                        console.error('Delete error:', err);
+                        setError('Failed to delete: ' + err.message);
+                    }
+                }
+            };
+
+            // Handle stage change from Kanban drag-drop
+            const handleStageChange = async (restaurantId, newStage) => {
+                let updatedRestaurant = null;
+                setRestaurants(prev => prev.map(r => {
+                    if (r.id === restaurantId) {
+                        updatedRestaurant = {
+                            ...r,
+                            stage: newStage,
+                            stageEnteredDate: new Date().toISOString().split('T')[0]
+                        };
+                        return updatedRestaurant;
+                    }
+                    return r;
+                }));
+                
+                // Save to Google Sheets
+                if (updatedRestaurant) {
+                    try {
+                        await sheetsAPI.saveRestaurant(updatedRestaurant);
+                    } catch (err) {
+                        console.error('Stage change error:', err);
+                        setError('Failed to update stage: ' + err.message);
+                    }
+                }
+            };
+
+            // Quick add note to a restaurant
+            const handleAddNote = async (restaurantId, noteText) => {
+                const newNote = {
+                    id: Date.now().toString(),
+                    date: new Date().toISOString().split('T')[0],
+                    text: noteText
+                };
+                
+                let updatedRestaurant = null;
+                setRestaurants(prev => prev.map(r => {
+                    if (r.id === restaurantId) {
+                        updatedRestaurant = {
+                            ...r,
+                            notesHistory: [...(r.notesHistory || []), newNote]
+                        };
+                        return updatedRestaurant;
+                    }
+                    return r;
+                }));
+                
+                // Save to Google Sheets
+                if (updatedRestaurant) {
+                    try {
+                        await sheetsAPI.saveRestaurant(updatedRestaurant);
+                    } catch (err) {
+                        console.error('Save note error:', err);
+                        setError('Failed to save note: ' + err.message);
+                    }
+                }
+            };
+
+            const exportData = () => {
+                const data = { restaurants, contacts };
+                const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url; a.download = 'remy-data.json'; a.click();
+            };
+
+            const importData = async (e) => {
+                const file = e.target.files[0];
+                if (!file) return;
+                if (!confirm('Import data from JSON file?\n\nThis will REPLACE all data in Google Sheets.')) {
+                    return;
+                }
+                const reader = new FileReader();
+                reader.onload = async (event) => {
+                    try {
+                        const data = JSON.parse(event.target.result);
+                        setSyncing(true);
+                        if (Array.isArray(data)) {
+                            // Legacy format - just restaurants
+                            setRestaurants(data);
+                            await sheetsAPI.syncAll(data, contacts);
+                            alert('Restaurants imported and synced to Google Sheets!');
+                        } else if (data.restaurants) {
+                            // New format with both restaurants and contacts
+                            setRestaurants(data.restaurants);
+                            if (data.contacts) setContacts(data.contacts);
+                            await sheetsAPI.syncAll(data.restaurants, data.contacts || contacts);
+                            alert('Data imported and synced to Google Sheets!');
+                        }
+                        setSyncing(false);
+                        setLastSync(new Date());
+                    } catch (err) {
+                        setSyncing(false);
+                        alert('Import failed: ' + err.message);
+                    }
+                };
+                reader.readAsText(file);
+            };
+
+            // Show loading screen
+            if (loading) {
+                return (
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100vh', background: '#09090b' }}>
+                        <div style={{ textAlign: 'center' }}>
+                            <div style={{ fontSize: 48, marginBottom: 16 }}>🐀</div>
+                            <div style={{ color: '#f97316', fontSize: 18, fontWeight: 600 }}>Loading...</div>
+                            <div style={{ color: '#71717a', fontSize: 13, marginTop: 8 }}>
+                                Connecting to Google Sheets
+                            </div>
+                        </div>
+                    </div>
+                );
+            }
+
+            // Show error screen if failed to load
+            if (error && restaurants.length === 0) {
+                return (
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100vh', background: '#09090b' }}>
+                        <div style={{ textAlign: 'center', maxWidth: 400, padding: 20 }}>
+                            <div style={{ fontSize: 48, marginBottom: 16 }}>⚠️</div>
+                            <div style={{ color: '#ef4444', fontSize: 18, fontWeight: 600, marginBottom: 12 }}>Connection Error</div>
+                            <div style={{ color: '#a1a1aa', fontSize: 14, marginBottom: 20 }}>{error}</div>
+                            <div style={{ color: '#71717a', fontSize: 12, marginBottom: 20 }}>
+                                Make sure you've:<br/>
+                                1. Pasted your Google Script URL on line 26<br/>
+                                2. Deployed the script as a Web App<br/>
+                                3. Set access to "Anyone"
+                            </div>
+                            <button 
+                                onClick={() => window.location.reload()} 
+                                style={{ background: '#f97316', color: '#fff', border: 'none', padding: '10px 20px', borderRadius: 6, cursor: 'pointer', fontSize: 14 }}
+                            >
+                                Retry
+                            </button>
+                        </div>
+                    </div>
+                );
+            }
+
+            return (
+                <div style={styles.app}>
+                    <aside style={styles.sidebar}>
+                        <div style={styles.logo}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                                <img src="data:image/webp;base64,UklGRv5pAABXRUJQVlA4WAoAAAAwAAAABQYABwcASUNDUMgBAAAAAAHIAAAAAAQwAABtbnRyUkdCIFhZWiAH4AABAAEAAAAAAABhY3NwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAQAA9tYAAQAAAADTLQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAlkZXNjAAAA8AAAACRyWFlaAAABFAAAABRnWFlaAAABKAAAABRiWFlaAAABPAAAABR3dHB0AAABUAAAABRyVFJDAAABZAAAAChnVFJDAAABZAAAAChiVFJDAAABZAAAAChjcHJ0AAABjAAAADxtbHVjAAAAAAAAAAEAAAAMZW5VUwAAAAgAAAAcAHMAUgBHAEJYWVogAAAAAAAAb6IAADj1AAADkFhZWiAAAAAAAABimQAAt4UAABjaWFlaIAAAAAAAACSgAAAPhAAAts9YWVogAAAAAAAA9tYAAQAAAADTLXBhcmEAAAAAAAQAAAACZmYAAPKnAAANWQAAE9AAAApbAAAAAAAAAABtbHVjAAAAAAAAAAEAAAAMZW5VUwAAACAAAAAcAEcAbwBvAGcAbABlACAASQBuAGMALgAgADIAMAAxADZBTFBIezAAAAEkxm0bOZL6L3s94eI7IiYAvxi4IPc4LWIl2TZZsM0p6g4y94kIIHEAlrgK4hZbguQO88rgmKwK0DHd2GbyD/rD/tuVk/7/1sxkUkiBhN4l9GKhd5AivYk0UekiVTqoSFFAutIh9BJQAki38AIVBKRLC6EFqYG0ISEhfWb9IcLsdfbZM8xZr4uImACJkSQpkqQbM9PrdsxMYj2TGGs2O9ed3R4REwCv/M///M///M///M///M///M///M///M///M///M///M///M///M///M///M///M///M///M///M///M///M///M///M///M///M///M///M///M///M///M///M///M///M///M///M///M///M///M///M///M///M///M///M///M///M///M///M///M///M///M///M///M///M///M///M///P/K//yP+kXq9xzx9dIftv/v0KFDh37avmnBl4M7vhnE6YW+O2VHVDo6OfH02lHNgtk7S92xu2JRvOPKmn6l+bpC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Fvc9cPgrUHx9Dq9Qmri/gcOfi+L7cXghT8TZcnF4U1H8LGDw/ePF5ZTi8Mai+J3A4Ps8INCMwxuE4q+YGDzLDQJDgMH/EMU/CWLwTJcILAAGvyOKd5Tn8E4Q+BkY/GZIsBGHd5DAPmDwa6H4JyU4vF3icjoAg1/FISy1E3D44Sg4aXUJ4PB9loYJXDTj4/re8Mr//M///M///M///M///M///M///M///M///M///M///M///M///M///M///M///M///M///M///M///M///M///M///M///M///M///M///M///M///M///M///M///M///M///M///M///M///M///M///M///M///M///M///M///M///M///M///M///M///M///M///M///M///M///M///P/JDQBWUDggjDcAAJD/Ap0BKgYGCAc+USiRRyO/oaEg8Dgr8AoJaW78EeSOm8cZumTr7/EfQB/AMr0+gDrCZFegXTdu4UHkz/QD+gcTD1luTD/T02OrTr/+YjPSpz5n/w/5d7uz3j8qP7F+zP1+4f++/gfrXbG9DTxP9J/0P9//eX/H/Qb/Z/r574/1f7Af8X/l3+l/wP+Z/83+L+uvo/8wf6x/+r/Pe8H/0f9d/tPdx/ev9H7AH9R/rn/p9pT/2ezL/cfUC/lH+G/6Hrdf+z/Kfv/9F/7Zft98Bn86/t//v/b////IB/3/UA/f/3K/4B+//vT8H/wA/Uf7l7AHubGT7QrdQTzfeqe7AokyZMmTJkyZMmTJkyZMmTJkyZMmTJkyZMmTJkyZMmTJkyZMmTJkyZMmTJkyZMmTJkyZMmTJkyZMmTJkyZMmTJkyZMmTJkyZMmTJkyZMmTJkyZMmTJkyZMmTJkyZMmTJkyZMmTJkyZMmTJkyZMmTJkyZMmTJkyZMmTJkyZMmTJkyZMmTJkyZMmTJkyZMmTJkyZMmTJkyZMmTJkyZMmTJkyZMmTJkyZMmTJkyZMmTJkyZMmTJkyZMmTJkyZMmTJkyZMmTJkyZMmTJkyZMmTJkyZMmTJkyZMmTJkyZMmTJkyZMmTJkyZMmTJkyZMmTJkyZMmTJkyZMmTJkyZMmTJkyZMmTJkyZMmTJkyZMmTJkyZMmTJkyZMmTJkyZMmTJkyZMmTJkyZMmTJkyZMmTJkyZMmTJkyZMmTJkyZMmTJkyZMmTJkyZ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BAgQIECBAgQIECBAgQIECBAgQIECBAgQIECBAgQIECBAgQIECBAgQIECBAgQIECBAgQIECBAgQIECBAgQIECBAgQIECBAgQIECBAgQIECBAgQIECBAgQIECBAgQIECBAgQIECBAgQIECBAgQIECBAgQIECBAgQIECBAgQIECBAgQIECBAgQIECBAgQIECBAgQIECBAgQIECBAgQIECBAgQIECBAgQIECBAgQIECBAgQIECBAgQIECBAgQIECBAgQIECBAgQIECBAgQIECBAgQIECBAgQIECBAgQIECBAgQIECBAgQIECBAgQIECBAgQIECBAgQIECBAgQIECBAgQIECBAgQIECBAgQIECBAgQIECBAgQIECBAgQIECBAgQIECBAgQIECBAgQIECBAgQIECBAgQIECBAgQIECBAgQIECBAgQIECBAgQIECBAgQIECBAgQIECBAgQIECBAgQIECBAgQIECBAgQIECBAgQIECBAgQIECBAgQIECBAgQIECBAgQIECBAgQIECBAgQIECBAgQIECBAgQIECBAgQIECBAgQIECBAgQIECBAgQIECBAgQIECBAgQIECBAgQIECBAgQIECBAgQIECBAgQIECBAgQIECBAgQIECBAgQIECBAgQIECBAgQIECBAgQIECBAgQIECBAgQIECBAgQIECBAgQIECBAgQIECBAgQIECBAgQIECBAgQIECBAgQIECBAgQIECBAgQIECBAgQIECBAgQIECBAgQIECBAgQIECBAgQIECBAgQIECBAgQIECBAgQIECBAgQIECBAgQIECBAgQIECBAgQIECBAgQIECBAgQIECBAgQIECBAgQIECBAgQIECBAgQIECBAgQIECBAgQIECBAgQIECBAgQIECBAgQIECBAgQIECBAgQIECBAgQIECBAgQIECBAgQIECBAgQIECBAgQIECBAgQIECBAgQIECBAgQIECBAgQIECBAgQIECBAgQIECBAgQIECBAgQIECBAgQIECBAgQIECBAgQIECBAgQIECBAgQIECBAgQIECBAgQIECBAgQIECBAgQIECBAgQIECBAgQIECBAgQIECBAgQIECBAgQIECBAgQIECBAgQIECBAgQIECBAgQIECBAgQIECBAgQIECBAgQIECBAgQIECBAgQIECBAgQIECBAgQIECBAgQIECBAgQIECBAgQIECBAg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" alt="Remy AI" style={{ height: 36, width: 'auto' }} />
+                                </div>
+                            <div style={{ fontSize: 10, color: '#22c55e', marginTop: 4, display: 'flex', alignItems: 'center', gap: 4 }}>
+                                <span style={{ width: 6, height: 6, background: syncing ? '#f59e0b' : '#22c55e', borderRadius: '50%' }}></span>
+                                {syncing ? 'Syncing...' : 'Google Sheets'}
+                            </div>
+                            {error && (
+                                <div style={{ fontSize: 10, color: '#ef4444', marginTop: 4 }}>
+                                    ⚠️ {error}
+                                </div>
+                            )}
+                        </div>
+                        <nav style={styles.nav}>
+                            <div style={{ ...styles.navItem, ...(page === 'dashboard' ? styles.navItemActive : {}) }} onClick={() => setPage('dashboard')}>
+                                <Icon name="home" /> Dashboard
+                            </div>
+                            <div style={{ ...styles.navItem, ...(page === 'pipeline' ? styles.navItemActive : {}) }} onClick={() => setPage('pipeline')}>
+                                <Icon name="target" /> Pipeline
+                            </div>
+                            <div style={{ ...styles.navItem, ...(page === 'list' ? styles.navItemActive : {}) }} onClick={() => setPage('list')}>
+                                <Icon name="list" /> All Restaurants
+                                <span style={{ marginLeft: 'auto', background: '#27272a', padding: '2px 8px', borderRadius: 10, fontSize: 11 }}>{restaurants.length}</span>
+                            </div>
+                            <div style={{ ...styles.navItem, ...(page === 'contacts' ? styles.navItemActive : {}) }} onClick={() => setPage('contacts')}>
+                                <Icon name="users" /> Contacts
+                                <span style={{ marginLeft: 'auto', background: '#27272a', padding: '2px 8px', borderRadius: 10, fontSize: 11 }}>{contacts.length}</span>
+                            </div>
+                            
+                            <div style={{ marginTop: 24, padding: '8px 12px', fontSize: 11, color: '#52525b', textTransform: 'uppercase', letterSpacing: 0.5 }}>Sync</div>
+                            <div 
+                                style={{ ...styles.navItem, opacity: syncing ? 0.5 : 1 }} 
+                                onClick={syncing ? null : handleRefresh}
+                            >
+                                <Icon name="refresh" /> {syncing ? 'Syncing...' : 'Refresh from Sheets'}
+                            </div>
+                            {lastSync && (
+                                <div style={{ padding: '4px 12px', fontSize: 10, color: '#52525b' }}>
+                                    Last sync: {lastSync.toLocaleTimeString()}
+                                </div>
+                            )}
+                            
+                            <div style={{ marginTop: 24, padding: '8px 12px', fontSize: 11, color: '#52525b', textTransform: 'uppercase', letterSpacing: 0.5 }}>Data</div>
+                            <div style={styles.navItem} onClick={exportData}>
+                                <Icon name="download" /> Export JSON
+                            </div>
+                            <label style={{ ...styles.navItem, cursor: 'pointer' }}>
+                                <Icon name="upload" /> Import JSON
+                                <input type="file" accept=".json" onChange={importData} style={{ display: 'none' }} />
+                            </label>
+                        </nav>
+                    </aside>
+
+                    <main style={styles.main}>
+                        <header style={styles.header}>
+                            <h1 style={styles.pageTitle}>
+                                {page === 'dashboard' ? 'Dashboard' : page === 'pipeline' ? 'Pipeline' : page === 'list' ? 'All Restaurants' : 'Contacts'}
+                            </h1>
+                            <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
+                                {page === 'list' && (
+                                    <>
+                                        <div style={styles.searchBox}>
+                                            <Icon name="search" size={16} />
+                                            <input style={styles.searchInput} placeholder="Search..." value={search} onChange={e => setSearch(e.target.value)} />
+                                        </div>
+                                        <select style={{ ...styles.formInput, width: 160 }} value={filter} onChange={e => setFilter(e.target.value)}>
+                                            <option value="">All Stages</option>
+                                            {STAGES.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                                        </select>
+                                        <button style={{ ...styles.btn, ...styles.btnPrimary }} onClick={() => setModal({})}>
+                                            <Icon name="plus" size={16} /> Add Restaurant
+                                        </button>
+                                    </>
+                                )}
+                                {page === 'contacts' && (
+                                    <>
+                                        <div style={styles.searchBox}>
+                                            <Icon name="search" size={16} />
+                                            <input style={styles.searchInput} placeholder="Search contacts..." value={search} onChange={e => setSearch(e.target.value)} />
+                                        </div>
+                                        <button style={{ ...styles.btn, ...styles.btnPrimary }} onClick={() => setContactModal({})}>
+                                            <Icon name="plus" size={16} /> Add Contact
+                                        </button>
+                                    </>
+                                )}
+                                {page === 'dashboard' && (
+                                    <button style={{ ...styles.btn, ...styles.btnPrimary }} onClick={() => setModal({})}>
+                                        <Icon name="plus" size={16} /> Add Restaurant
+                                    </button>
+                                )}
+                            </div>
+                        </header>
+
+                        <div style={styles.content}>
+                            {page === 'dashboard' ? (
+                                <Dashboard restaurants={restaurants} onEdit={setModal} onAddNote={handleAddNote} />
+                            ) : page === 'pipeline' ? (
+                                <PipelineView restaurants={restaurants} onEdit={setModal} onStageChange={handleStageChange} />
+                            ) : page === 'list' ? (
+                                <RestaurantList restaurants={restaurants} contacts={contacts} search={search} filter={filter} onEdit={setModal} onDelete={handleDelete} />
+                            ) : (
+                                <ContactList contacts={contacts} restaurants={restaurants} search={search} onEdit={setContactModal} onDelete={handleDeleteContact} />
+                            )}
+                        </div>
+                    </main>
+
+                    {modal !== null && (
+                        <RestaurantModal 
+                            restaurant={modal.id ? modal : null} 
+                            contacts={contacts}
+                            onSave={handleSave} 
+                            onSaveContact={(c) => handleSaveContact(c, true)}
+                            onClose={() => setModal(null)} 
+                        />
+                    )}
+
+                    {contactModal !== null && (
+                        <ContactModal contact={contactModal.id ? contactModal : null} restaurants={restaurants} onSave={handleSaveContact} onClose={() => setContactModal(null)} />
+                    )}
+                </div>
+            );
+        };
+
+        ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+    </script>
+</body>
+</html>
