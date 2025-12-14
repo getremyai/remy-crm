@@ -17,6 +17,15 @@
     </style>
 </head>
 <body>
+    <script>
+        const correctPassword = "remy4thewin";
+        const password = prompt("Digite a senha para acessar:");
+        
+        if (password !== correctPassword) {
+            document.body.innerHTML = "<h1>Acesso negado</h1>";
+            throw new Error("Acesso negado");
+        }
+    </script>
     <div id="root"></div>
     <script type="text/babel">
         const { useState, useEffect, useMemo, useCallback } = React;
