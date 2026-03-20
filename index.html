@@ -552,6 +552,23 @@ const AppProvider=({children})=>{
     }
   },[currentUser,setData]);
 
+  const removeUser=useCallback(async(id,reassignToId)=>{
+    // Reassign all owned data to target user, then delete
+    await sb.from('restaurants').update({owner_id:reassignToId}).eq('owner_id',id);
+    await sb.from('activities').update({user_id:reassignToId}).eq('user_id',id);
+    await sb.from('contacts').update({imported_by:reassignToId}).eq('imported_by',id);
+    await sb.from('users').delete().eq('id',id);
+    // Optimistic UI
+    setData(d=>({
+      ...d,
+      users:d.users.filter(u=>u.id!==id),
+      restaurants:d.restaurants.map(r=>r.owner_id===id?{...r,owner_id:reassignToId}:r),
+      activities:d.activities.map(a=>a.user_id===id?{...a,user_id:reassignToId}:a),
+      contacts:d.contacts.map(c=>c.imported_by===id?{...c,imported_by:reassignToId}:c)
+    }));
+    showToast('User removed and data reassigned');
+  },[setData,showToast]);
+
   const getUserName=useCallback((id)=>{
     const u=data.users.find(u=>u.id===id);
     return u?u.full_name:'Unknown';
@@ -573,7 +590,7 @@ const AppProvider=({children})=>{
     loginWithEmail(email);
   },[loginWithEmail]);
 
-  const value=useMemo(()=>({data,currentUser,page,setPage,toast,showToast,login,loginWithGoogle,loginWithEmail,logout,updateRestaurant,addRestaurant,deleteRestaurant,addContact,updateContact,deleteContact,linkContact,unlinkContact,addActivity,updateUser,getUserName,resetData,setData,loading,isOnline}),[data,currentUser,page,toast,showToast,login,loginWithGoogle,loginWithEmail,logout,updateRestaurant,addRestaurant,deleteRestaurant,addContact,updateContact,deleteContact,linkContact,unlinkContact,addActivity,updateUser,getUserName,resetData,setData,loading,isOnline]);
+  const value=useMemo(()=>({data,currentUser,page,setPage,toast,showToast,login,loginWithGoogle,loginWithEmail,logout,updateRestaurant,addRestaurant,deleteRestaurant,addContact,updateContact,deleteContact,linkContact,unlinkContact,addActivity,updateUser,removeUser,getUserName,resetData,setData,loading,isOnline}),[data,currentUser,page,setPage,toast,showToast,login,loginWithGoogle,loginWithEmail,logout,updateRestaurant,addRestaurant,deleteRestaurant,addContact,updateContact,deleteContact,linkContact,unlinkContact,addActivity,updateUser,removeUser,getUserName,resetData,setData,loading,isOnline]);
 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>;
 };
@@ -2356,9 +2373,11 @@ const ActivitiesPage=()=>{
 
 // ==================== ADMIN ====================
 const AdminPage=()=>{
-  const{data,currentUser,updateUser,resetData,showToast}=useApp();
+  const{data,currentUser,updateUser,removeUser,resetData,showToast}=useApp();
   const{users,restaurants,contacts,activities}=data;
   const[tab,setTab]=useState('users');
+  const[removeTarget,setRemoveTarget]=useState(null); // user to remove
+  const[reassignTo,setReassignTo]=useState(''); // who gets their data
 
   const exportCSV=(type)=>{
     let csv='';let filename='';
@@ -2515,15 +2534,40 @@ ${rActs.length>0?'\nRecent Activity:\n'+rActs.map(a=>'  ['+fmtDate(a.occurred_at
                   <td style={S.td}><span style={{...S.badge,background:u.role==='admin'?'rgba(249,115,22,0.15)':'#27272a',color:u.role==='admin'?'#f97316':'#a1a1aa'}}>{u.role}</span></td>
                   <td style={{...S.td,color:'#71717a',fontSize:13}}>{fmtDate(u.created_at)}</td>
                   <td style={S.td}>
+                    <div style={{display:'flex',gap:8,alignItems:'center'}}>
                     {u.id!==currentUser.id&&<select style={{...S.formInput,padding:'4px 8px',fontSize:12,width:120}} value={u.role} onChange={e=>updateUser(u.id,{role:e.target.value})}>
                       <option value="admin">Admin</option>
                       <option value="sales_rep">Sales Rep</option>
                     </select>}
+                    {u.id!==currentUser.id&&<button style={{...S.btn,color:'#ef4444',fontSize:12,padding:'4px 10px',border:'1px solid rgba(239,68,68,0.3)'}} onClick={()=>{setRemoveTarget(u);setReassignTo(currentUser.id)}}>Remove</button>}
+                    </div>
                   </td>
                 </tr>
               ))}
             </tbody>
           </table>
+
+          {removeTarget&&(
+            <Modal title={`Remove ${removeTarget.full_name}?`} onClose={()=>setRemoveTarget(null)}>
+              <div style={{padding:20}}>
+                <p style={{fontSize:14,color:'#a1a1aa',marginBottom:8}}>
+                  This will permanently remove <strong style={{color:'#fff'}}>{removeTarget.full_name}</strong> ({removeTarget.email}) from the CRM.
+                </p>
+                <p style={{fontSize:13,color:'#71717a',marginBottom:16}}>
+                  Their {restaurants.filter(r=>r.owner_id===removeTarget.id).length} restaurants, activities, and imported contacts will be reassigned to:
+                </p>
+                <select style={{...S.formInput,marginBottom:20}} value={reassignTo} onChange={e=>setReassignTo(e.target.value)}>
+                  {users.filter(u=>u.id!==removeTarget.id).map(u=>(
+                    <option key={u.id} value={u.id}>{u.full_name} ({u.email})</option>
+                  ))}
+                </select>
+                <div style={{display:'flex',gap:12,justifyContent:'flex-end'}}>
+                  <button style={{...S.btn,...S.btnGhost}} onClick={()=>setRemoveTarget(null)}>Cancel</button>
+                  <button style={{...S.btn,...S.btnDanger}} onClick={()=>{removeUser(removeTarget.id,reassignTo);setRemoveTarget(null)}}>Remove User</button>
+                </div>
+              </div>
+            </Modal>
+          )}
         </div>
       )}
 
