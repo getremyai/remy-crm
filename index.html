@@ -430,7 +430,7 @@ const AppProvider=({children})=>{
     const{error}=await sb.auth.signInWithOAuth({
       provider:'google',
       options:{
-        redirectTo:window.location.href,
+        redirectTo:'https://crm.getremyai.com/',
         queryParams:{hd:'getremyai.com'}
       }
     });
@@ -441,7 +441,7 @@ const AppProvider=({children})=>{
     // Magic link login (passwordless)
     const{error}=await sb.auth.signInWithOtp({
       email,
-      options:{emailRedirectTo:window.location.href}
+      options:{emailRedirectTo:'https://crm.getremyai.com/'}
     });
     if(error)showToast(error.message,'error');
     else showToast('Check your email for the login link!');
