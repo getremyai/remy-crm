@@ -67,6 +67,30 @@ const CONTACT_TAGS=['decision-maker','influencer','operator','investor','referre
 const ACTION_TYPES=['Call','Email','Meeting','Demo','Follow-up'];
 const ACTIVITY_TYPES=['call','email','meeting','note','stage_change','contact_linked','import'];
 
+// ---- FUNDING PIPELINE ----
+const FUNDING_STAGES=[
+  {id:'identified',name:'Identified',color:'#6b7280',desc:'Potential investor spotted'},
+  {id:'intro',name:'Intro',color:'#8b5cf6',desc:'Introduction made'},
+  {id:'meeting',name:'Meeting',color:'#3b82f6',desc:'Meeting scheduled/held'},
+  {id:'dd',name:'Due Diligence',color:'#f59e0b',desc:'DD in progress'},
+  {id:'term_sheet',name:'Term Sheet',color:'#14b8a6',desc:'Terms being negotiated'},
+  {id:'closed',name:'Closed',color:'#10b981',desc:'Deal closed'}
+];
+const FUNDING_STAGE_MAP=Object.fromEntries(FUNDING_STAGES.map(s=>[s.id,s]));
+const ROUND_TYPES=['Pre-seed','Seed','Series A','Series B','Bridge','Convertible Note','SAFE'];
+
+// ---- PARTNERSHIPS PIPELINE ----
+const PARTNER_STAGES=[
+  {id:'identified',name:'Identified',color:'#6b7280',desc:'Potential partner spotted'},
+  {id:'outreach',name:'Outreach',color:'#8b5cf6',desc:'Initial contact made'},
+  {id:'evaluating',name:'Evaluating',color:'#3b82f6',desc:'Exploring partnership fit'},
+  {id:'agreement',name:'Agreement',color:'#f59e0b',desc:'Terms being finalised'},
+  {id:'live',name:'Live',color:'#10b981',desc:'Active partnership'},
+  {id:'churned',name:'Churned',color:'#dc2626',desc:'Partnership ended'}
+];
+const PARTNER_STAGE_MAP=Object.fromEntries(PARTNER_STAGES.map(s=>[s.id,s]));
+const PARTNER_TYPES=['Channel','Integration','Referral','Reseller','Technology','Distribution'];
+
 // ==================== STYLES ====================
 const S={
   app:{display:'flex',minHeight:'100vh'},
@@ -265,6 +289,9 @@ const SEED_CONTACT_RESTAURANTS=[
 
 // 38 restaurants, 18 contacts, 18 links
 
+const SEED_FUNDING_DEALS=[];
+const SEED_PARTNERSHIPS=[];
+
 const SEED_ACTIVITIES=[
   {id:'a1',restaurant_id:'r1',contact_id:'c1',user_id:'u1',type:'stage_change',subject:'Started Trial',body:'Oy Bar - Wimbledon trial kicked off.',occurred_at:'2026-02-10T10:00:00',metadata:{old_stage:'proposal',new_stage:'trial'}},
   {id:'a2',restaurant_id:'r2',contact_id:'c2',user_id:'u2',type:'stage_change',subject:'Proposal Accepted',body:'Sicily accepted proposal. Moving forward.',occurred_at:'2026-02-10T09:00:00',metadata:{old_stage:'proposal',new_stage:'proposal'}},
@@ -300,12 +327,12 @@ const initLocalData=()=>{
   if(storedVer!==DATA_VERSION){localStorage.removeItem(LS_KEY);localStorage.removeItem('remy_crm_user');localStorage.setItem(LS_VER_KEY,DATA_VERSION);}
   const existing=loadLocalData();
   if(existing&&existing.users&&existing.users.length>0)return existing;
-  const fresh={users:SEED_USERS,restaurants:SEED_RESTAURANTS,contacts:SEED_CONTACTS,contact_restaurants:SEED_CONTACT_RESTAURANTS,activities:SEED_ACTIVITIES};
+  const fresh={users:SEED_USERS,restaurants:SEED_RESTAURANTS,contacts:SEED_CONTACTS,contact_restaurants:SEED_CONTACT_RESTAURANTS,activities:SEED_ACTIVITIES,funding_deals:SEED_FUNDING_DEALS,partnerships:SEED_PARTNERSHIPS};
   saveLocalData(fresh);
   return fresh;
 };
 
-const EMPTY_DATA={users:[],restaurants:[],contacts:[],contact_restaurants:[],activities:[]};
+const EMPTY_DATA={users:[],restaurants:[],contacts:[],contact_restaurants:[],activities:[],funding_deals:[],partnerships:[]};
 
 const AppContext=createContext();
 
@@ -355,19 +382,23 @@ const AppProvider=({children})=>{
   // ---------- FETCH ALL DATA ----------
   const fetchAllData=async()=>{
     try{
-      const[u,r,c,cr,a]=await Promise.all([
+      const[u,r,c,cr,a,fd,pa]=await Promise.all([
         sb.from('users').select('*'),
         sb.from('restaurants').select('*'),
         sb.from('contacts').select('*'),
         sb.from('contact_restaurants').select('*'),
-        sb.from('activities').select('*').order('occurred_at',{ascending:false})
+        sb.from('activities').select('*').order('occurred_at',{ascending:false}),
+        sb.from('funding_deals').select('*').then(res=>res).catch(()=>({data:[]})),
+        sb.from('partnerships').select('*').then(res=>res).catch(()=>({data:[]}))
       ]);
       const fresh={
         users:u.data||[],
         restaurants:r.data||[],
         contacts:c.data||[],
         contact_restaurants:cr.data||[],
-        activities:a.data||[]
+        activities:a.data||[],
+        funding_deals:fd.data||[],
+        partnerships:pa.data||[]
       };
       setDataRaw(fresh);
       saveLocalData(fresh); // cache locally
@@ -388,6 +419,8 @@ const AppProvider=({children})=>{
       .on('postgres_changes',{event:'*',schema:'public',table:'activities'},()=>refreshTable('activities'))
       .on('postgres_changes',{event:'*',schema:'public',table:'contact_restaurants'},()=>refreshTable('contact_restaurants'))
       .on('postgres_changes',{event:'*',schema:'public',table:'users'},()=>refreshTable('users'))
+      .on('postgres_changes',{event:'*',schema:'public',table:'funding_deals'},()=>refreshTable('funding_deals'))
+      .on('postgres_changes',{event:'*',schema:'public',table:'partnerships'},()=>refreshTable('partnerships'))
       .subscribe();
     return()=>sb.removeChannel(channel);
   },[authReady,currentUser]);
@@ -543,6 +576,52 @@ const AppProvider=({children})=>{
     showToast('Activity logged');
   },[currentUser,setData,showToast]);
 
+  // ---------- CRUD: FUNDING DEALS ----------
+  const addFundingDeal=useCallback(async(deal)=>{
+    const newD={...deal,owner_id:deal.owner_id||currentUser?.id};
+    delete newD.id;
+    const{data:inserted,error}=await sb.from('funding_deals').insert(newD).select().single();
+    if(error){showToast('Add failed: '+error.message,'error');return null}
+    setData(d=>({...d,funding_deals:[...d.funding_deals,inserted]}));
+    showToast('Funding deal added');
+    return inserted;
+  },[currentUser,setData,showToast]);
+
+  const updateFundingDeal=useCallback(async(id,updates)=>{
+    setData(d=>({...d,funding_deals:d.funding_deals.map(f=>f.id===id?{...f,...updates,updated_at:new Date().toISOString()}:f)}));
+    const{error}=await sb.from('funding_deals').update(updates).eq('id',id);
+    if(error)showToast('Save failed: '+error.message,'error');
+  },[setData,showToast]);
+
+  const deleteFundingDeal=useCallback(async(id)=>{
+    setData(d=>({...d,funding_deals:d.funding_deals.filter(f=>f.id!==id)}));
+    await sb.from('funding_deals').delete().eq('id',id);
+    showToast('Funding deal deleted');
+  },[setData,showToast]);
+
+  // ---------- CRUD: PARTNERSHIPS ----------
+  const addPartnership=useCallback(async(p)=>{
+    const newP={...p,owner_id:p.owner_id||currentUser?.id};
+    delete newP.id;
+    const{data:inserted,error}=await sb.from('partnerships').insert(newP).select().single();
+    if(error){showToast('Add failed: '+error.message,'error');return null}
+    setData(d=>({...d,partnerships:[...d.partnerships,inserted]}));
+    showToast('Partnership added');
+    return inserted;
+  },[currentUser,setData,showToast]);
+
+  const updatePartnership=useCallback(async(id,updates)=>{
+    setData(d=>({...d,partnerships:d.partnerships.map(p=>p.id===id?{...p,...updates,updated_at:new Date().toISOString()}:p)}));
+    const{error}=await sb.from('partnerships').update(updates).eq('id',id);
+    if(error)showToast('Save failed: '+error.message,'error');
+  },[setData,showToast]);
+
+  const deletePartnership=useCallback(async(id)=>{
+    setData(d=>({...d,partnerships:d.partnerships.filter(p=>p.id!==id)}));
+    await sb.from('partnerships').delete().eq('id',id);
+    showToast('Partnership deleted');
+  },[setData,showToast]);
+
   // ---------- CRUD: USERS ----------
   const updateUser=useCallback(async(id,updates)=>{
     setData(d=>({...d,users:d.users.map(u=>u.id===id?{...u,...updates}:u)}));
@@ -553,16 +632,18 @@ const AppProvider=({children})=>{
   },[currentUser,setData]);
 
   const removeUser=useCallback(async(id,reassignToId)=>{
-    // Reassign all owned data to target user, then delete
     await sb.from('restaurants').update({owner_id:reassignToId}).eq('owner_id',id);
+    await sb.from('funding_deals').update({owner_id:reassignToId}).eq('owner_id',id);
+    await sb.from('partnerships').update({owner_id:reassignToId}).eq('owner_id',id);
     await sb.from('activities').update({user_id:reassignToId}).eq('user_id',id);
     await sb.from('contacts').update({imported_by:reassignToId}).eq('imported_by',id);
     await sb.from('users').delete().eq('id',id);
-    // Optimistic UI
     setData(d=>({
       ...d,
       users:d.users.filter(u=>u.id!==id),
       restaurants:d.restaurants.map(r=>r.owner_id===id?{...r,owner_id:reassignToId}:r),
+      funding_deals:d.funding_deals.map(f=>f.owner_id===id?{...f,owner_id:reassignToId}:f),
+      partnerships:d.partnerships.map(p=>p.owner_id===id?{...p,owner_id:reassignToId}:p),
       activities:d.activities.map(a=>a.user_id===id?{...a,user_id:reassignToId}:a),
       contacts:d.contacts.map(c=>c.imported_by===id?{...c,imported_by:reassignToId}:c)
     }));
@@ -590,7 +671,7 @@ const AppProvider=({children})=>{
     loginWithEmail(email);
   },[loginWithEmail]);
 
-  const value=useMemo(()=>({data,currentUser,page,setPage,toast,showToast,login,loginWithGoogle,loginWithEmail,logout,updateRestaurant,addRestaurant,deleteRestaurant,addContact,updateContact,deleteContact,linkContact,unlinkContact,addActivity,updateUser,removeUser,getUserName,resetData,setData,loading,isOnline}),[data,currentUser,page,setPage,toast,showToast,login,loginWithGoogle,loginWithEmail,logout,updateRestaurant,addRestaurant,deleteRestaurant,addContact,updateContact,deleteContact,linkContact,unlinkContact,addActivity,updateUser,removeUser,getUserName,resetData,setData,loading,isOnline]);
+  const value=useMemo(()=>({data,currentUser,page,setPage,toast,showToast,login,loginWithGoogle,loginWithEmail,logout,updateRestaurant,addRestaurant,deleteRestaurant,addContact,updateContact,deleteContact,linkContact,unlinkContact,addActivity,updateUser,removeUser,getUserName,resetData,setData,loading,isOnline,addFundingDeal,updateFundingDeal,deleteFundingDeal,addPartnership,updatePartnership,deletePartnership}),[data,currentUser,page,setPage,toast,showToast,login,loginWithGoogle,loginWithEmail,logout,updateRestaurant,addRestaurant,deleteRestaurant,addContact,updateContact,deleteContact,linkContact,unlinkContact,addActivity,updateUser,removeUser,getUserName,resetData,setData,loading,isOnline,addFundingDeal,updateFundingDeal,deleteFundingDeal,addPartnership,updatePartnership,deletePartnership]);
 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>;
 };
@@ -771,7 +852,7 @@ const LoginPage=()=>{
 // ==================== DASHBOARD ====================
 const Dashboard=()=>{
   const{data,currentUser,updateRestaurant,addActivity,setPage,showToast}=useApp();
-  const{restaurants,activities,users}=data;
+  const{restaurants,activities,users,funding_deals,partnerships}=data;
   const[selectedRest,setSelectedRest]=useState('');
   const[quickNote,setQuickNote]=useState('');
   const[quickType,setQuickType]=useState('note');
@@ -789,6 +870,24 @@ const Dashboard=()=>{
       closed:restaurants.filter(r=>r.stage==='closed').length
     };
   },[restaurants]);
+
+  const fundingStats=useMemo(()=>{
+    const deals=funding_deals||[];
+    const active=deals.filter(d=>d.stage!=='closed');
+    const closed=deals.filter(d=>d.stage==='closed');
+    const hot=deals.filter(d=>['dd','term_sheet'].includes(d.stage));
+    const totalTarget=active.reduce((s,d)=>s+(parseFloat(d.amount_target)||0),0);
+    const totalClosed=closed.reduce((s,d)=>s+(parseFloat(d.amount_target)||0),0);
+    return{total:deals.length,active:active.length,hot:hot.length,closed:closed.length,totalTarget,totalClosed};
+  },[funding_deals]);
+
+  const partnerStats=useMemo(()=>{
+    const ps=partnerships||[];
+    const live=ps.filter(p=>p.stage==='live');
+    const pipe=ps.filter(p=>!['live','churned'].includes(p.stage));
+    const churned=ps.filter(p=>p.stage==='churned');
+    return{total:ps.length,live:live.length,pipeline:pipe.length,churned:churned.length};
+  },[partnerships]);
 
   const nextActions=useMemo(()=>{
     const t=new Date();t.setHours(0,0,0,0);
@@ -889,13 +988,40 @@ const Dashboard=()=>{
         </div>
       </div>
 
-      {/* Stat Cards */}
-      <div style={S.grid5}>
-        <div style={S.statCard}><div style={{...S.statVal,color:'#f97316'}}>{stats.total}</div><div style={S.statLabel}>Total Restaurants</div></div>
-        <div style={S.statCard}><div style={{...S.statVal,color:'#10b981'}}>{stats.live}</div><div style={S.statLabel}>Live Clients</div></div>
-        <div style={S.statCard}><div style={{...S.statVal,color:'#3b82f6'}}>{stats.pipeline}</div><div style={S.statLabel}>In Pipeline</div></div>
-        <div style={S.statCard}><div style={{...S.statVal,color:'#14b8a6'}}>{stats.trials}</div><div style={S.statLabel}>Trials Active</div></div>
-        <div style={S.statCard}><div style={{...S.statVal,color:'#10b981'}}>{fmtCurrency(stats.mrr)}</div><div style={S.statLabel}>Monthly MRR</div></div>
+      {/* Pipeline Summaries */}
+      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:16,marginBottom:24}}>
+        {/* Restaurant Pipeline */}
+        <div style={{...S.card,padding:16,cursor:'pointer',borderLeft:'3px solid #f97316'}} onClick={()=>setPage('pipeline')}>
+          <div style={{fontSize:12,fontWeight:600,color:'#f97316',textTransform:'uppercase',letterSpacing:1,marginBottom:12}}>Restaurant Pipeline</div>
+          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8}}>
+            <div><div style={{fontSize:22,fontWeight:700,color:'#fafafa'}}>{stats.live}</div><div style={{fontSize:11,color:'#71717a'}}>Live clients</div></div>
+            <div><div style={{fontSize:22,fontWeight:700,color:'#fafafa'}}>{stats.pipeline}</div><div style={{fontSize:11,color:'#71717a'}}>In pipeline</div></div>
+            <div><div style={{fontSize:22,fontWeight:700,color:'#14b8a6'}}>{stats.trials}</div><div style={{fontSize:11,color:'#71717a'}}>Trials active</div></div>
+            <div><div style={{fontSize:22,fontWeight:700,color:'#10b981'}}>{fmtCurrency(stats.mrr)}</div><div style={{fontSize:11,color:'#71717a'}}>Monthly MRR</div></div>
+          </div>
+        </div>
+
+        {/* Funding Pipeline */}
+        <div style={{...S.card,padding:16,cursor:'pointer',borderLeft:'3px solid #8b5cf6'}} onClick={()=>setPage('funding')}>
+          <div style={{fontSize:12,fontWeight:600,color:'#8b5cf6',textTransform:'uppercase',letterSpacing:1,marginBottom:12}}>Funding Pipeline</div>
+          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8}}>
+            <div><div style={{fontSize:22,fontWeight:700,color:'#fafafa'}}>{fundingStats.total}</div><div style={{fontSize:11,color:'#71717a'}}>Total deals</div></div>
+            <div><div style={{fontSize:22,fontWeight:700,color:'#fafafa'}}>{fmtCurrency(fundingStats.totalTarget)}</div><div style={{fontSize:11,color:'#71717a'}}>Being raised</div></div>
+            <div><div style={{fontSize:22,fontWeight:700,color:'#f59e0b'}}>{fundingStats.hot}</div><div style={{fontSize:11,color:'#71717a'}}>DD / Term Sheet</div></div>
+            <div><div style={{fontSize:22,fontWeight:700,color:'#10b981'}}>{fundingStats.closed}</div><div style={{fontSize:11,color:'#71717a'}}>Closed</div></div>
+          </div>
+        </div>
+
+        {/* Partnerships Pipeline */}
+        <div style={{...S.card,padding:16,cursor:'pointer',borderLeft:'3px solid #14b8a6'}} onClick={()=>setPage('partners')}>
+          <div style={{fontSize:12,fontWeight:600,color:'#14b8a6',textTransform:'uppercase',letterSpacing:1,marginBottom:12}}>Partnerships</div>
+          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8}}>
+            <div><div style={{fontSize:22,fontWeight:700,color:'#fafafa'}}>{partnerStats.total}</div><div style={{fontSize:11,color:'#71717a'}}>Total</div></div>
+            <div><div style={{fontSize:22,fontWeight:700,color:'#10b981'}}>{partnerStats.live}</div><div style={{fontSize:11,color:'#71717a'}}>Live</div></div>
+            <div><div style={{fontSize:22,fontWeight:700,color:'#3b82f6'}}>{partnerStats.pipeline}</div><div style={{fontSize:11,color:'#71717a'}}>In pipeline</div></div>
+            <div><div style={{fontSize:22,fontWeight:700,color:'#dc2626'}}>{partnerStats.churned}</div><div style={{fontSize:11,color:'#71717a'}}>Churned</div></div>
+          </div>
+        </div>
       </div>
 
       <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:24,marginBottom:24}}>
@@ -1523,6 +1649,15 @@ const HOSP_POSITION_KW=['head chef','chef de','sous chef','executive chef','past
 // False positive blockers — companies that contain hospitality words but aren't venues
 const COMPANY_BLOCKLIST=['capital','ventures','venture','consulting','consultancy','advisor','advisory','council','software','tech','technology','technologies','digital','media','agency','marketing','analytics','research','institute','university','college','school','academy','labs','laboratory','fund','partners','investment','financial','insurance','legal','law firm','recruitment','staffing','pharma','biotech','engineering','architects','design studio','data','cloud','platform','solutions','services group','management consulting','strategy'];
 
+// ---- Investor matching engine ----
+const INVESTOR_COMPANY_KW=['venture capital','vc ','ventures','venture partner','angel','seed fund','growth fund','investment fund','capital partners','capital management','family office','accelerator','incubator','early stage','pre-seed','series a','startup fund','fund manager','private equity','impact fund','syndicate','foodtech fund','hospitality fund','restaurant fund','f&b fund'];
+const INVESTOR_POSITION_KW=['venture partner','general partner','managing partner','investment director','investment manager','investment associate','investment analyst','principal','fund manager','angel investor','venture capitalist','partner at','head of investments','portfolio manager','deal flow','fundraising','investor relations','limited partner'];
+const INVESTOR_BLOCKLIST=['recruitment','staffing','hr ','human resources','real estate','property','insurance','law firm','legal'];
+
+// ---- Partner matching engine ----
+const PARTNER_COMPANY_KW=['booking system','reservation','opentable','resdiary','thefork','quandoo','resy','sevenrooms','tablein','pos ','point of sale','epos','lightspeed','square','toast pos','clover','zettle','sumup','stripe','deliveroo','uber eats','just eat','food delivery','takeaway','hospitality tech','restaurant tech','restaurant software','menu','digital menu','qr code','loyalty','crm','marketing platform','review','tripadvisor','google business','hospitality platform','food tech','foodtech','kitchen','inventory','procurement','supplier','wholesale','restaurant supply'];
+const PARTNER_POSITION_KW=['partnerships manager','partnership director','head of partnerships','business development manager','bd manager','channel manager','strategic partnerships','alliance manager','partner manager','integration manager','head of integrations','api partnerships','platform partnerships','ecosystem','marketplace manager','head of sales','sales director hospitality','account executive hospitality'];
+
 // Word-boundary aware keyword check
 const kwMatch=(text,keywords)=>{
   const t=' '+text.toLowerCase()+' ';
@@ -1596,6 +1731,31 @@ const isHospitalityContact=(contact)=>{
   return{isHosp,compHits,posHits,confidence};
 };
 
+const isInvestorContact=(contact)=>{
+  const comp=(contact.company||'').toLowerCase();
+  const pos=(contact.position||'').toLowerCase();
+  if(!comp&&!pos)return{isInvestor:false,compHits:[],posHits:[],confidence:'none'};
+  if(comp&&INVESTOR_BLOCKLIST.some(bl=>comp.includes(bl)))return{isInvestor:false,compHits:[],posHits:[],confidence:'none'};
+  const compHits=kwMatch(comp,INVESTOR_COMPANY_KW);
+  const posHits=kwMatch(pos,INVESTOR_POSITION_KW);
+  const bothMatch=compHits.length>0&&posHits.length>0;
+  const isInvestor=bothMatch||compHits.length>=2||posHits.length>0;
+  const confidence=bothMatch?'high':(compHits.length>=2||posHits.length>0)?'medium':'low';
+  return{isInvestor,compHits,posHits,confidence};
+};
+
+const isPartnerContact=(contact)=>{
+  const comp=(contact.company||'').toLowerCase();
+  const pos=(contact.position||'').toLowerCase();
+  if(!comp&&!pos)return{isPartner:false,compHits:[],posHits:[],confidence:'none'};
+  const compHits=kwMatch(comp,PARTNER_COMPANY_KW);
+  const posHits=kwMatch(pos,PARTNER_POSITION_KW);
+  const bothMatch=compHits.length>0&&posHits.length>0;
+  const isPartner=bothMatch||compHits.length>=2||posHits.length>0;
+  const confidence=bothMatch?'high':(compHits.length>=2||posHits.length>0)?'medium':'low';
+  return{isPartner,compHits,posHits,confidence};
+};
+
 const generateOutreachBlurb=(contact,restaurant)=>{
   const first=contact.firstName||contact.fullName.split(' ')[0];
   const pos=contact.position?` — saw you're ${contact.position}${contact.company?' at '+contact.company:''}. `:`! `;
@@ -1610,12 +1770,18 @@ const LinkedInPage=()=>{
   const{data,addContact,linkContact,addActivity,currentUser,showToast,setPage}=useApp();
   const[step,setStep]=useState(1);
   const[allParsed,setAllParsed]=useState([]);
-  const[pipelineMatches,setPipelineMatches]=useState([]); // contacts matched to CRM restaurants
-  const[hospContacts,setHospContacts]=useState([]); // hospitality contacts not matched
+  const[pipelineMatches,setPipelineMatches]=useState([]);
+  const[hospContacts,setHospContacts]=useState([]);
+  const[investorContacts,setInvestorContacts]=useState([]);
+  const[partnerContacts,setPartnerContacts]=useState([]);
   const[reviewIdx,setReviewIdx]=useState(0);
   const[hospReviewIdx,setHospReviewIdx]=useState(0);
-  const[decisions,setDecisions]=useState({}); // {idx: 'approve'|'skip'}
+  const[invReviewIdx,setInvReviewIdx]=useState(0);
+  const[partReviewIdx,setPartReviewIdx]=useState(0);
+  const[decisions,setDecisions]=useState({});
   const[hospDecisions,setHospDecisions]=useState({});
+  const[invDecisions,setInvDecisions]=useState({});
+  const[partDecisions,setPartDecisions]=useState({});
   const[blurbs,setBlurbs]=useState({});
   const[hospBlurbs,setHospBlurbs]=useState({});
   const[importedCount,setImportedCount]=useState(0);
@@ -1685,7 +1851,8 @@ const LinkedInPage=()=>{
         }
       });
 
-      // Step 2: find hospitality contacts not already matched
+      // Step 2: find hospitality, investor, and partner contacts not already matched
+      const invOnly=[];const partOnly=[];
       all.forEach((c,idx)=>{
         if(c.alreadyExists||seen.has(idx))return;
         const{isHosp,compHits,posHits,confidence}=isHospitalityContact(c);
@@ -1695,15 +1862,36 @@ const LinkedInPage=()=>{
           if(posHits.length>0)hospReason.push(`Position "${c.position}" matches: ${posHits.join(', ')}`);
           if(compHits.length>0&&posHits.length>0)hospReason.push('Both company and position signal hospitality — high confidence');
           hospOnly.push({...c,idx,hospReason,confidence});
+          seen.add(idx);
+          return;
+        }
+        const inv=isInvestorContact(c);
+        if(inv.isInvestor){
+          const reasons=[];
+          if(inv.compHits.length>0)reasons.push(`Company "${c.company}" matches: ${inv.compHits.join(', ')}`);
+          if(inv.posHits.length>0)reasons.push(`Position "${c.position}" matches: ${inv.posHits.join(', ')}`);
+          invOnly.push({...c,idx,reasons,confidence:inv.confidence});
+          seen.add(idx);
+          return;
+        }
+        const par=isPartnerContact(c);
+        if(par.isPartner){
+          const reasons=[];
+          if(par.compHits.length>0)reasons.push(`Company "${c.company}" matches: ${par.compHits.join(', ')}`);
+          if(par.posHits.length>0)reasons.push(`Position "${c.position}" matches: ${par.posHits.join(', ')}`);
+          partOnly.push({...c,idx,reasons,confidence:par.confidence});
+          seen.add(idx);
         }
       });
-      // Sort hospitality contacts by confidence (high first)
       hospOnly.sort((a,b)=>a.confidence==='high'?-1:b.confidence==='high'?1:0);
+      invOnly.sort((a,b)=>a.confidence==='high'?-1:b.confidence==='high'?1:0);
+      partOnly.sort((a,b)=>a.confidence==='high'?-1:b.confidence==='high'?1:0);
 
       setPipelineMatches(pm);
       setHospContacts(hospOnly);
+      setInvestorContacts(invOnly);
+      setPartnerContacts(partOnly);
 
-      // Pre-generate blurbs
       const b={};pm.forEach((p,i)=>{b[i]=generateOutreachBlurb(p,p.bestMatch.restaurant)});
       setBlurbs(b);
       const hb={};hospOnly.forEach((p,i)=>{hb[i]=generateOutreachBlurb(p,null)});
@@ -1744,7 +1932,19 @@ const LinkedInPage=()=>{
     // Import approved hospitality contacts
     hospContacts.forEach((p,i)=>{
       if(hospDecisions[i]!=='approve')return;
-      const newC=addContact({full_name:p.fullName,email:p.email,phone:'',mobile:'',job_title:p.position,company:p.company,global_tags:[],linkedin_url:p.linkedinUrl||'',source:'linkedin_import',notes:`Connected on LinkedIn: ${p.connDate}\n\nSuggested outreach:\n${hospBlurbs[i]||''}`});
+      addContact({full_name:p.fullName,email:p.email,phone:'',mobile:'',job_title:p.position,company:p.company,global_tags:[],linkedin_url:p.linkedinUrl||'',source:'linkedin_import',notes:`Connected on LinkedIn: ${p.connDate}\nCategory: Hospitality`});
+      count++;
+    });
+    // Import approved investor contacts
+    investorContacts.forEach((p,i)=>{
+      if(invDecisions[i]!=='approve')return;
+      addContact({full_name:p.fullName,email:p.email,phone:'',mobile:'',job_title:p.position,company:p.company,global_tags:['investor'],linkedin_url:p.linkedinUrl||'',source:'linkedin_import',notes:`Connected on LinkedIn: ${p.connDate}\nCategory: Investor`});
+      count++;
+    });
+    // Import approved partner contacts
+    partnerContacts.forEach((p,i)=>{
+      if(partDecisions[i]!=='approve')return;
+      addContact({full_name:p.fullName,email:p.email,phone:'',mobile:'',job_title:p.position,company:p.company,global_tags:['referrer'],linkedin_url:p.linkedinUrl||'',source:'linkedin_import',notes:`Connected on LinkedIn: ${p.connDate}\nCategory: Partner`});
       count++;
     });
     if(count>0){
@@ -1757,14 +1957,20 @@ const LinkedInPage=()=>{
 
   const approvedPipeline=Object.values(decisions).filter(d=>d==='approve').length;
   const approvedHosp=Object.values(hospDecisions).filter(d=>d==='approve').length;
-  const totalApproved=approvedPipeline+approvedHosp;
+  const approvedInv=Object.values(invDecisions).filter(d=>d==='approve').length;
+  const approvedPart=Object.values(partDecisions).filter(d=>d==='approve').length;
+  const totalApproved=approvedPipeline+approvedHosp+approvedInv+approvedPart;
 
-  // Step indicator
+  const decideInv=(idx,decision)=>{setInvDecisions(d=>({...d,[idx]:decision}));if(idx<investorContacts.length-1)setInvReviewIdx(idx+1)};
+  const decidePart=(idx,decision)=>{setPartDecisions(d=>({...d,[idx]:decision}));if(idx<partnerContacts.length-1)setPartReviewIdx(idx+1)};
+
   const steps=[
     {n:1,label:'Upload'},
-    {n:2,label:'Pipeline Matches'},
-    {n:3,label:'Hospitality Contacts'},
-    {n:4,label:'Confirm Import'},
+    {n:2,label:'Pipeline'},
+    {n:3,label:'Hospitality'},
+    {n:3.5,label:'Investors'},
+    {n:3.7,label:'Partners'},
+    {n:4,label:'Confirm'},
     {n:5,label:'Done'}
   ];
 
@@ -1798,9 +2004,11 @@ const LinkedInPage=()=>{
         <div style={{fontSize:13,color:'#a1a1aa',lineHeight:1.8,background:'#18181b',border:'1px solid #27272a',borderRadius:8,padding:16}}>
           <strong style={{color:'#f5f5f5'}}>How it works:</strong><br/>
           <span style={{color:'#f97316'}}>Step 1</span> — Upload your CSV<br/>
-          <span style={{color:'#f97316'}}>Step 2</span> — Review contacts matched to your CRM restaurants (with match reasoning)<br/>
-          <span style={{color:'#f97316'}}>Step 3</span> — Review other hospitality industry contacts<br/>
-          <span style={{color:'#f97316'}}>Step 4</span> — Confirm and import approved contacts with outreach message suggestions
+          <span style={{color:'#f97316'}}>Step 2</span> — Review contacts matched to your CRM restaurants<br/>
+          <span style={{color:'#f97316'}}>Step 3</span> — Review hospitality industry contacts<br/>
+          <span style={{color:'#f97316'}}>Step 4</span> — Review investor contacts (VC, angels, funds)<br/>
+          <span style={{color:'#f97316'}}>Step 5</span> — Review partner contacts (tech, booking, distribution)<br/>
+          <span style={{color:'#f97316'}}>Step 6</span> — Confirm and import approved contacts
         </div>
       </div>
       <div style={{...S.dropZone,flexDirection:'column',gap:12,borderColor:dragActive?'#f97316':'#3f3f46',background:dragActive?'rgba(249,115,22,0.05)':'#18181b'}}
@@ -2016,15 +2224,160 @@ const LinkedInPage=()=>{
 
             {Object.keys(hospDecisions).length===hospContacts.length&&(
               <div style={{textAlign:'center',marginTop:20}}>
-                <button style={{...S.btn,...S.btnPrimary,padding:'12px 32px'}} onClick={()=>setStep(4)}>
-                  Review Import Summary →
+                <button style={{...S.btn,...S.btnPrimary,padding:'12px 32px'}} onClick={()=>{setStep(3.5);setInvReviewIdx(0)}}>
+                  Continue to Investors ({investorContacts.length}) →
                 </button>
               </div>
             )}
           </div>
         ):null}
 
-        {/* Skip all button */}
+        <div style={{textAlign:'center',marginTop:16}}>
+          <button style={{...S.btn,...S.btnGhost,fontSize:12}} onClick={()=>{setStep(3.5);setInvReviewIdx(0)}}>Skip remaining and continue</button>
+        </div>
+      </div>
+    );
+  }
+
+  // ========== STEP 3.5: Investor Contacts ==========
+  if(step===3.5){
+    const current=investorContacts[invReviewIdx];
+    return(
+      <div>
+        <StepBar/>
+        <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:20}}>
+          <div>
+            <h3 style={{fontSize:16,fontWeight:600,marginBottom:4}}>Investor Contacts</h3>
+            <p style={{fontSize:13,color:'#71717a'}}>Connections in VC, angel investing, or fund management — potential funding leads.</p>
+          </div>
+          <div style={{textAlign:'right'}}>
+            <div style={{fontSize:24,fontWeight:700,color:'#8b5cf6'}}>{investorContacts.length}</div>
+            <div style={{fontSize:11,color:'#71717a'}}>investor contacts found</div>
+          </div>
+        </div>
+        <div style={{...S.grid3,marginBottom:20}}>
+          <div style={S.statCard}><div style={{...S.statVal,color:'#10b981',fontSize:20}}>{approvedInv}</div><div style={S.statLabel}>Approved</div></div>
+          <div style={S.statCard}><div style={{...S.statVal,color:'#71717a',fontSize:20}}>{Object.values(invDecisions).filter(d=>d==='skip').length}</div><div style={S.statLabel}>Skipped</div></div>
+          <div style={S.statCard}><div style={{...S.statVal,color:'#f97316',fontSize:20}}>{totalApproved}</div><div style={S.statLabel}>Total approved</div></div>
+        </div>
+        {investorContacts.length===0?(
+          <div style={{...S.card,padding:32,textAlign:'center'}}>
+            <div style={{fontSize:14,color:'#71717a',marginBottom:16}}>No investor contacts found in your connections.</div>
+            <button style={{...S.btn,...S.btnPrimary}} onClick={()=>{setStep(3.7);setPartReviewIdx(0)}}>Continue to Partners →</button>
+          </div>
+        ):current?(
+          <div>
+            <div style={{display:'flex',alignItems:'center',gap:12,marginBottom:16}}>
+              <div style={{flex:1,height:4,background:'#27272a',borderRadius:2,overflow:'hidden'}}>
+                <div style={{height:'100%',background:'#8b5cf6',borderRadius:2,width:`${((Object.keys(invDecisions).length)/investorContacts.length)*100}%`,transition:'width 0.3s'}}/>
+              </div>
+              <span style={{fontSize:12,color:'#71717a',whiteSpace:'nowrap'}}>{invReviewIdx+1} of {investorContacts.length}</span>
+            </div>
+            <div style={{...S.card,padding:0,overflow:'hidden'}} className="fade-in">
+              <div style={{padding:'20px 24px',borderBottom:'1px solid #27272a',display:'flex',justifyContent:'space-between',alignItems:'flex-start'}}>
+                <div>
+                  <div style={{fontSize:18,fontWeight:600,marginBottom:4}}>{current.fullName}</div>
+                  <div style={{fontSize:14,color:'#a1a1aa'}}>{current.position}{current.company?` at ${current.company}`:''}</div>
+                  {current.email&&<div style={{fontSize:12,color:'#71717a',marginTop:4}}>{current.email}</div>}
+                </div>
+                <span style={{...S.badge,background:current.confidence==='high'?'rgba(16,185,129,0.15)':'rgba(139,92,246,0.15)',color:current.confidence==='high'?'#10b981':'#8b5cf6',fontSize:11}}>{current.confidence==='high'?'High confidence':'Likely investor'}</span>
+              </div>
+              <div style={{padding:'16px 24px',background:'rgba(139,92,246,0.03)',borderBottom:'1px solid #27272a'}}>
+                <div style={{fontSize:12,fontWeight:600,color:'#8b5cf6',marginBottom:8,textTransform:'uppercase',letterSpacing:1}}>Why this contact</div>
+                {current.reasons.map((r,ri)=>(<div key={ri} style={{fontSize:13,color:'#a1a1aa',marginBottom:4}}>• {r}</div>))}
+              </div>
+              <div style={{padding:'16px 24px',display:'flex',gap:12,justifyContent:'space-between',alignItems:'center'}}>
+                <button style={{...S.btn,...S.btnGhost}} disabled={invReviewIdx===0} onClick={()=>setInvReviewIdx(invReviewIdx-1)}>← Previous</button>
+                <div style={{display:'flex',gap:12}}>
+                  <button style={{...S.btn,background:'rgba(239,68,68,0.1)',color:'#ef4444',border:'1px solid rgba(239,68,68,0.2)'}} onClick={()=>decideInv(invReviewIdx,'skip')}><I name="x" size={16}/> Skip</button>
+                  <button style={{...S.btn,...S.btnPrimary}} onClick={()=>decideInv(invReviewIdx,'approve')}><I name="check" size={16}/> Approve</button>
+                </div>
+              </div>
+              {invDecisions[invReviewIdx]&&(<div style={{padding:'8px 24px',background:invDecisions[invReviewIdx]==='approve'?'rgba(16,185,129,0.08)':'rgba(239,68,68,0.08)',borderTop:'1px solid #27272a',fontSize:12,color:invDecisions[invReviewIdx]==='approve'?'#10b981':'#ef4444',textAlign:'center'}}>{invDecisions[invReviewIdx]==='approve'?'✓ Approved':'✗ Skipped'}</div>)}
+            </div>
+            <div style={{display:'flex',gap:4,justifyContent:'center',marginTop:16,flexWrap:'wrap'}}>
+              {investorContacts.map((_,i)=>(<div key={i} onClick={()=>setInvReviewIdx(i)} style={{width:10,height:10,borderRadius:5,cursor:'pointer',background:invDecisions[i]==='approve'?'#10b981':invDecisions[i]==='skip'?'#ef4444':i===invReviewIdx?'#8b5cf6':'#3f3f46'}}/>))}
+            </div>
+            {Object.keys(invDecisions).length===investorContacts.length&&(
+              <div style={{textAlign:'center',marginTop:20}}>
+                <button style={{...S.btn,...S.btnPrimary,padding:'12px 32px'}} onClick={()=>{setStep(3.7);setPartReviewIdx(0)}}>Continue to Partners ({partnerContacts.length}) →</button>
+              </div>
+            )}
+          </div>
+        ):null}
+        <div style={{textAlign:'center',marginTop:16}}>
+          <button style={{...S.btn,...S.btnGhost,fontSize:12}} onClick={()=>{setStep(3.7);setPartReviewIdx(0)}}>Skip remaining and continue</button>
+        </div>
+      </div>
+    );
+  }
+
+  // ========== STEP 3.7: Partner Contacts ==========
+  if(step===3.7){
+    const current=partnerContacts[partReviewIdx];
+    return(
+      <div>
+        <StepBar/>
+        <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:20}}>
+          <div>
+            <h3 style={{fontSize:16,fontWeight:600,marginBottom:4}}>Partner Contacts</h3>
+            <p style={{fontSize:13,color:'#71717a'}}>Connections at booking systems, POS providers, delivery platforms, and hospitality tech — potential distribution partners.</p>
+          </div>
+          <div style={{textAlign:'right'}}>
+            <div style={{fontSize:24,fontWeight:700,color:'#14b8a6'}}>{partnerContacts.length}</div>
+            <div style={{fontSize:11,color:'#71717a'}}>partner contacts found</div>
+          </div>
+        </div>
+        <div style={{...S.grid3,marginBottom:20}}>
+          <div style={S.statCard}><div style={{...S.statVal,color:'#10b981',fontSize:20}}>{approvedPart}</div><div style={S.statLabel}>Approved</div></div>
+          <div style={S.statCard}><div style={{...S.statVal,color:'#71717a',fontSize:20}}>{Object.values(partDecisions).filter(d=>d==='skip').length}</div><div style={S.statLabel}>Skipped</div></div>
+          <div style={S.statCard}><div style={{...S.statVal,color:'#f97316',fontSize:20}}>{totalApproved}</div><div style={S.statLabel}>Total approved</div></div>
+        </div>
+        {partnerContacts.length===0?(
+          <div style={{...S.card,padding:32,textAlign:'center'}}>
+            <div style={{fontSize:14,color:'#71717a',marginBottom:16}}>No partner contacts found in your connections.</div>
+            <button style={{...S.btn,...S.btnPrimary}} onClick={()=>setStep(4)}>Continue to Import Summary →</button>
+          </div>
+        ):current?(
+          <div>
+            <div style={{display:'flex',alignItems:'center',gap:12,marginBottom:16}}>
+              <div style={{flex:1,height:4,background:'#27272a',borderRadius:2,overflow:'hidden'}}>
+                <div style={{height:'100%',background:'#14b8a6',borderRadius:2,width:`${((Object.keys(partDecisions).length)/partnerContacts.length)*100}%`,transition:'width 0.3s'}}/>
+              </div>
+              <span style={{fontSize:12,color:'#71717a',whiteSpace:'nowrap'}}>{partReviewIdx+1} of {partnerContacts.length}</span>
+            </div>
+            <div style={{...S.card,padding:0,overflow:'hidden'}} className="fade-in">
+              <div style={{padding:'20px 24px',borderBottom:'1px solid #27272a',display:'flex',justifyContent:'space-between',alignItems:'flex-start'}}>
+                <div>
+                  <div style={{fontSize:18,fontWeight:600,marginBottom:4}}>{current.fullName}</div>
+                  <div style={{fontSize:14,color:'#a1a1aa'}}>{current.position}{current.company?` at ${current.company}`:''}</div>
+                  {current.email&&<div style={{fontSize:12,color:'#71717a',marginTop:4}}>{current.email}</div>}
+                </div>
+                <span style={{...S.badge,background:current.confidence==='high'?'rgba(16,185,129,0.15)':'rgba(20,184,166,0.15)',color:current.confidence==='high'?'#10b981':'#14b8a6',fontSize:11}}>{current.confidence==='high'?'High confidence':'Likely partner'}</span>
+              </div>
+              <div style={{padding:'16px 24px',background:'rgba(20,184,166,0.03)',borderBottom:'1px solid #27272a'}}>
+                <div style={{fontSize:12,fontWeight:600,color:'#14b8a6',marginBottom:8,textTransform:'uppercase',letterSpacing:1}}>Why this contact</div>
+                {current.reasons.map((r,ri)=>(<div key={ri} style={{fontSize:13,color:'#a1a1aa',marginBottom:4}}>• {r}</div>))}
+              </div>
+              <div style={{padding:'16px 24px',display:'flex',gap:12,justifyContent:'space-between',alignItems:'center'}}>
+                <button style={{...S.btn,...S.btnGhost}} disabled={partReviewIdx===0} onClick={()=>setPartReviewIdx(partReviewIdx-1)}>← Previous</button>
+                <div style={{display:'flex',gap:12}}>
+                  <button style={{...S.btn,background:'rgba(239,68,68,0.1)',color:'#ef4444',border:'1px solid rgba(239,68,68,0.2)'}} onClick={()=>decidePart(partReviewIdx,'skip')}><I name="x" size={16}/> Skip</button>
+                  <button style={{...S.btn,...S.btnPrimary}} onClick={()=>decidePart(partReviewIdx,'approve')}><I name="check" size={16}/> Approve</button>
+                </div>
+              </div>
+              {partDecisions[partReviewIdx]&&(<div style={{padding:'8px 24px',background:partDecisions[partReviewIdx]==='approve'?'rgba(16,185,129,0.08)':'rgba(239,68,68,0.08)',borderTop:'1px solid #27272a',fontSize:12,color:partDecisions[partReviewIdx]==='approve'?'#10b981':'#ef4444',textAlign:'center'}}>{partDecisions[partReviewIdx]==='approve'?'✓ Approved':'✗ Skipped'}</div>)}
+            </div>
+            <div style={{display:'flex',gap:4,justifyContent:'center',marginTop:16,flexWrap:'wrap'}}>
+              {partnerContacts.map((_,i)=>(<div key={i} onClick={()=>setPartReviewIdx(i)} style={{width:10,height:10,borderRadius:5,cursor:'pointer',background:partDecisions[i]==='approve'?'#10b981':partDecisions[i]==='skip'?'#ef4444':i===partReviewIdx?'#14b8a6':'#3f3f46'}}/>))}
+            </div>
+            {Object.keys(partDecisions).length===partnerContacts.length&&(
+              <div style={{textAlign:'center',marginTop:20}}>
+                <button style={{...S.btn,...S.btnPrimary,padding:'12px 32px'}} onClick={()=>setStep(4)}>Review Import Summary →</button>
+              </div>
+            )}
+          </div>
+        ):null}
         <div style={{textAlign:'center',marginTop:16}}>
           <button style={{...S.btn,...S.btnGhost,fontSize:12}} onClick={()=>setStep(4)}>Skip remaining and go to summary</button>
         </div>
@@ -2036,15 +2389,19 @@ const LinkedInPage=()=>{
   if(step===4){
     const approvedP=pipelineMatches.filter((_,i)=>decisions[i]==='approve');
     const approvedH=hospContacts.filter((_,i)=>hospDecisions[i]==='approve');
+    const approvedI=investorContacts.filter((_,i)=>invDecisions[i]==='approve');
+    const approvedPa=partnerContacts.filter((_,i)=>partDecisions[i]==='approve');
     return(
       <div>
         <StepBar/>
         <h3 style={{fontSize:16,fontWeight:600,marginBottom:16}}>Import Summary</h3>
 
-        <div style={{...S.grid3,marginBottom:24}}>
-          <div style={S.statCard}><div style={{...S.statVal,color:'#f97316',fontSize:28}}>{totalApproved}</div><div style={S.statLabel}>Total to import</div></div>
-          <div style={S.statCard}><div style={{...S.statVal,color:'#10b981',fontSize:28}}>{approvedP.length}</div><div style={S.statLabel}>Pipeline matches</div></div>
-          <div style={S.statCard}><div style={{...S.statVal,color:'#8b5cf6',fontSize:28}}>{approvedH.length}</div><div style={S.statLabel}>Hospitality contacts</div></div>
+        <div style={{display:'grid',gridTemplateColumns:'repeat(5,1fr)',gap:12,marginBottom:24}}>
+          <div style={S.statCard}><div style={{...S.statVal,color:'#f97316',fontSize:24}}>{totalApproved}</div><div style={S.statLabel}>Total</div></div>
+          <div style={S.statCard}><div style={{...S.statVal,color:'#10b981',fontSize:24}}>{approvedP.length}</div><div style={S.statLabel}>Pipeline</div></div>
+          <div style={S.statCard}><div style={{...S.statVal,color:'#8b5cf6',fontSize:24}}>{approvedH.length}</div><div style={S.statLabel}>Hospitality</div></div>
+          <div style={S.statCard}><div style={{...S.statVal,color:'#a855f7',fontSize:24}}>{approvedI.length}</div><div style={S.statLabel}>Investors</div></div>
+          <div style={S.statCard}><div style={{...S.statVal,color:'#14b8a6',fontSize:24}}>{approvedPa.length}</div><div style={S.statLabel}>Partners</div></div>
         </div>
 
         {approvedP.length>0&&<div style={{...S.card,marginBottom:16}}>
@@ -2060,18 +2417,28 @@ const LinkedInPage=()=>{
         </div>}
 
         {approvedH.length>0&&<div style={{...S.card,marginBottom:16}}>
-          <div style={S.cardHead}><span style={{...S.cardTitle,color:'#8b5cf6'}}>Hospitality Contacts to Import</span></div>
-          <table style={S.table}><thead><tr>
-            <th style={S.th}>Name</th><th style={S.th}>Company</th><th style={S.th}>Position</th>
-          </tr></thead><tbody>
-            {approvedH.map((p,i)=>(
-              <tr key={i}><td style={S.td}>{p.fullName}</td><td style={{...S.td,fontSize:13}}>{p.company}</td><td style={{...S.td,fontSize:13,color:'#a1a1aa'}}>{p.position}</td></tr>
-            ))}
+          <div style={S.cardHead}><span style={{...S.cardTitle,color:'#8b5cf6'}}>Hospitality Contacts</span></div>
+          <table style={S.table}><thead><tr><th style={S.th}>Name</th><th style={S.th}>Company</th><th style={S.th}>Position</th></tr></thead><tbody>
+            {approvedH.map((p,i)=>(<tr key={i}><td style={S.td}>{p.fullName}</td><td style={{...S.td,fontSize:13}}>{p.company}</td><td style={{...S.td,fontSize:13,color:'#a1a1aa'}}>{p.position}</td></tr>))}
+          </tbody></table>
+        </div>}
+
+        {approvedI.length>0&&<div style={{...S.card,marginBottom:16}}>
+          <div style={S.cardHead}><span style={{...S.cardTitle,color:'#a855f7'}}>Investor Contacts</span></div>
+          <table style={S.table}><thead><tr><th style={S.th}>Name</th><th style={S.th}>Company</th><th style={S.th}>Position</th></tr></thead><tbody>
+            {approvedI.map((p,i)=>(<tr key={i}><td style={S.td}>{p.fullName}</td><td style={{...S.td,fontSize:13}}>{p.company}</td><td style={{...S.td,fontSize:13,color:'#a1a1aa'}}>{p.position}</td></tr>))}
+          </tbody></table>
+        </div>}
+
+        {approvedPa.length>0&&<div style={{...S.card,marginBottom:16}}>
+          <div style={S.cardHead}><span style={{...S.cardTitle,color:'#14b8a6'}}>Partner Contacts</span></div>
+          <table style={S.table}><thead><tr><th style={S.th}>Name</th><th style={S.th}>Company</th><th style={S.th}>Position</th></tr></thead><tbody>
+            {approvedPa.map((p,i)=>(<tr key={i}><td style={S.td}>{p.fullName}</td><td style={{...S.td,fontSize:13}}>{p.company}</td><td style={{...S.td,fontSize:13,color:'#a1a1aa'}}>{p.position}</td></tr>))}
           </tbody></table>
         </div>}
 
         <div style={{display:'flex',gap:12,justifyContent:'center',marginTop:24}}>
-          <button style={{...S.btn,...S.btnGhost}} onClick={()=>setStep(3)}>← Back to Review</button>
+          <button style={{...S.btn,...S.btnGhost}} onClick={()=>setStep(3.7)}>← Back to Review</button>
           <button style={{...S.btn,...S.btnPrimary,padding:'12px 32px',fontSize:15}} onClick={doImport} disabled={totalApproved===0}>
             <I name="check" size={18}/> Import {totalApproved} Contacts
           </button>
@@ -2374,7 +2741,7 @@ const ActivitiesPage=()=>{
 // ==================== ADMIN ====================
 const AdminPage=()=>{
   const{data,currentUser,updateUser,removeUser,resetData,showToast}=useApp();
-  const{users,restaurants,contacts,activities}=data;
+  const{users,restaurants,contacts,activities,funding_deals,partnerships}=data;
   const[tab,setTab]=useState('users');
   const[removeTarget,setRemoveTarget]=useState(null); // user to remove
   const[reassignTo,setReassignTo]=useState(''); // who gets their data
@@ -2461,6 +2828,19 @@ PIPELINE BREAKDOWN
 ${stageBreakdown}
 
 ${trials.length>0?`ACTIVE TRIALS\n${topTrials}\n`:''}${proposals.length>0?`\nPENDING PROPOSALS\n${topProposals}\n`:''}
+FUNDING PIPELINE
+  Total Deals:            ${(funding_deals||[]).length}
+  Active (non-closed):    ${(funding_deals||[]).filter(d=>d.stage!=='closed').length}
+  In DD / Term Sheet:     ${(funding_deals||[]).filter(d=>['dd','term_sheet'].includes(d.stage)).length}
+  Total Seeking:          ${fmtCurrency((funding_deals||[]).filter(d=>d.stage!=='closed').reduce((s,d)=>s+(parseFloat(d.amount_target)||0),0))}
+  Closed:                 ${(funding_deals||[]).filter(d=>d.stage==='closed').length} (${fmtCurrency((funding_deals||[]).filter(d=>d.stage==='closed').reduce((s,d)=>s+(parseFloat(d.amount_target)||0),0))})
+
+PARTNERSHIPS
+  Total:                  ${(partnerships||[]).length}
+  Live:                   ${(partnerships||[]).filter(p=>p.stage==='live').length}
+  In Pipeline:            ${(partnerships||[]).filter(p=>!['live','churned'].includes(p.stage)).length}
+  Churned:                ${(partnerships||[]).filter(p=>p.stage==='churned').length}
+
 TEAM
   Active Reps: ${users.length}
 ${users.map(u=>{
@@ -2647,10 +3027,20 @@ ${rActs.length>0?'\nRecent Activity:\n'+rActs.map(a=>'  ['+fmtDate(a.occurred_at
         <div style={{display:'flex',flexDirection:'column',gap:16}}>
           <div style={{...S.card,padding:20}}>
             <h3 style={{fontSize:15,fontWeight:600,marginBottom:12}}>Export Data as CSV</h3>
-            <div style={{display:'flex',gap:12}}>
+            <div style={{display:'flex',gap:12,flexWrap:'wrap'}}>
               <button style={{...S.btn,...S.btnSecondary}} onClick={()=>exportCSV('restaurants')}><I name="download" size={16}/> Restaurants ({restaurants.length})</button>
               <button style={{...S.btn,...S.btnSecondary}} onClick={()=>exportCSV('contacts')}><I name="download" size={16}/> Contacts ({contacts.length})</button>
               <button style={{...S.btn,...S.btnSecondary}} onClick={()=>exportCSV('activities')}><I name="download" size={16}/> Activities ({activities.length})</button>
+              <button style={{...S.btn,...S.btnSecondary}} onClick={()=>{
+                let csv='Investor,Fund,Round,Amount Target,Valuation,Stage,Intro Source,Next Action Date,Next Action Type,Owner,Notes\n';
+                (funding_deals||[]).forEach(d=>{const owner=users.find(u=>u.id===d.owner_id)?.full_name||'';csv+=`"${d.investor_name||''}","${d.fund_name||''}","${d.round_type||''}","${d.amount_target||''}","${d.valuation_offered||''}","${d.stage}","${d.intro_source||''}","${d.next_action_date||''}","${d.next_action_type||''}","${owner}","${(d.notes||'').replace(/"/g,'""')}"\n`});
+                const blob=new Blob([csv],{type:'text/csv'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download='remy_funding_deals.csv';a.click();URL.revokeObjectURL(url);showToast('Exported funding deals');
+              }}><I name="download" size={16}/> Funding ({(funding_deals||[]).length})</button>
+              <button style={{...S.btn,...S.btnSecondary}} onClick={()=>{
+                let csv='Partner,Type,Stage,Website,Channel,Next Action Date,Next Action Type,Owner,Notes\n';
+                (partnerships||[]).forEach(p=>{const owner=users.find(u=>u.id===p.owner_id)?.full_name||'';csv+=`"${p.partner_name||''}","${p.partner_type||''}","${p.stage}","${p.website||''}","${(p.channel_description||'').replace(/"/g,'""')}","${p.next_action_date||''}","${p.next_action_type||''}","${owner}","${(p.notes||'').replace(/"/g,'""')}"\n`});
+                const blob=new Blob([csv],{type:'text/csv'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download='remy_partnerships.csv';a.click();URL.revokeObjectURL(url);showToast('Exported partnerships');
+              }}><I name="download" size={16}/> Partners ({(partnerships||[]).length})</button>
             </div>
           </div>
         </div>
@@ -2663,6 +3053,1197 @@ ${rActs.length>0?'\nRecent Activity:\n'+rActs.map(a=>'  ['+fmtDate(a.occurred_at
           <button style={{...S.btn,...S.btnDanger}} onClick={()=>{if(confirm('Reset ALL data to defaults? This cannot be undone.'))resetData()}}><I name="refresh" size={16}/> Reset to Demo Data</button>
         </div>
       )}
+    </div>
+  );
+};
+
+// ==================== FUNDING PIPELINE ====================
+
+const FundingDealModal = ({ deal, isOpen, onClose }) => {
+  const { data, addFundingDeal, updateFundingDeal, currentUser, showToast } = useApp();
+  const [form, setForm] = useState(deal || {});
+  const [errors, setErrors] = useState({});
+
+  useEffect(() => {
+    setForm(deal || {});
+    setErrors({});
+  }, [deal, isOpen]);
+
+  const handleChange = (field, value) => {
+    setForm(prev => ({ ...prev, [field]: value }));
+    if (errors[field]) {
+      setErrors(prev => ({ ...prev, [field]: null }));
+    }
+  };
+
+  const validate = () => {
+    const newErrors = {};
+    if (!form.investor_name?.trim()) newErrors.investor_name = 'Investor name required';
+    if (!form.round_type) newErrors.round_type = 'Round type required';
+    if (!form.stage) newErrors.stage = 'Stage required';
+    if (form.amount_target && isNaN(form.amount_target)) newErrors.amount_target = 'Must be a number';
+    if (form.valuation_offered && isNaN(form.valuation_offered)) newErrors.valuation_offered = 'Must be a number';
+    setErrors(newErrors);
+    return Object.keys(newErrors).length === 0;
+  };
+
+  const handleSave = async () => {
+    if (!validate()) return;
+
+    const payload = {
+      investor_name: form.investor_name,
+      fund_name: form.fund_name || '',
+      contact_id: form.contact_id || null,
+      round_type: form.round_type,
+      amount_target: form.amount_target ? parseFloat(form.amount_target) : 0,
+      valuation_offered: form.valuation_offered ? parseFloat(form.valuation_offered) : 0,
+      stage: form.stage,
+      intro_source: form.intro_source || '',
+      next_action_date: form.next_action_date || null,
+      next_action_type: form.next_action_type || 'Follow-up',
+      notes: form.notes || '',
+      owner_id: form.owner_id || currentUser.id
+    };
+
+    if (form.id) {
+      updateFundingDeal(form.id, payload);
+      showToast('Funding deal updated', 'success');
+    } else {
+      addFundingDeal(payload);
+      showToast('Funding deal added', 'success');
+    }
+    onClose();
+  };
+
+  const contactName = form.contact_id
+    ? data.contacts.find(c => c.id === form.contact_id)?.name || ''
+    : '';
+
+  return (
+    <Modal isOpen={isOpen} onClose={onClose} size="lg">
+      <div style={S.modalContent}>
+        <div style={S.modalHeader}>
+          <h2 style={S.cardTitle}>{form.id ? 'Edit Funding Deal' : 'New Funding Deal'}</h2>
+          <button onClick={onClose} style={{...S.btn, background: 'transparent', padding: '4px'}}>
+            <I name="x" size={20} color="#a1a1aa" />
+          </button>
+        </div>
+
+        <div style={{padding: '24px', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px', maxHeight: '70vh', overflowY: 'auto'}}>
+
+          <div style={S.formGroup}>
+            <label style={S.formLabel}>Investor Name *</label>
+            <input
+              style={{...S.formInput, borderColor: errors.investor_name ? '#ef4444' : undefined}}
+              type="text"
+              value={form.investor_name || ''}
+              onChange={(e) => handleChange('investor_name', e.target.value)}
+              placeholder="e.g., Accel Partners"
+            />
+            {errors.investor_name && <div style={{color: '#ef4444', fontSize: '12px', marginTop: '4px'}}>{errors.investor_name}</div>}
+          </div>
+
+          <div style={S.formGroup}>
+            <label style={S.formLabel}>Fund Name</label>
+            <input
+              style={S.formInput}
+              type="text"
+              value={form.fund_name || ''}
+              onChange={(e) => handleChange('fund_name', e.target.value)}
+              placeholder="e.g., Accel Ventures IV"
+            />
+          </div>
+
+          <div style={S.formGroup}>
+            <label style={S.formLabel}>Contact</label>
+            <SelectInput
+              options={data.contacts.map(c => ({value: c.id, label: c.name}))}
+              value={form.contact_id}
+              onChange={(val) => handleChange('contact_id', val)}
+              placeholder="Select contact"
+            />
+          </div>
+
+          <div style={S.formGroup}>
+            <label style={S.formLabel}>Round Type *</label>
+            <SelectInput
+              options={ROUND_TYPES.map(rt => ({value: rt, label: rt}))}
+              value={form.round_type}
+              onChange={(val) => handleChange('round_type', val)}
+              placeholder="Select round type"
+            />
+            {errors.round_type && <div style={{color: '#ef4444', fontSize: '12px', marginTop: '4px'}}>{errors.round_type}</div>}
+          </div>
+
+          <div style={S.formGroup}>
+            <label style={S.formLabel}>Amount Target (£)</label>
+            <input
+              style={{...S.formInput, borderColor: errors.amount_target ? '#ef4444' : undefined}}
+              type="number"
+              value={form.amount_target || ''}
+              onChange={(e) => handleChange('amount_target', e.target.value)}
+              placeholder="0"
+            />
+            {errors.amount_target && <div style={{color: '#ef4444', fontSize: '12px', marginTop: '4px'}}>{errors.amount_target}</div>}
+          </div>
+
+          <div style={S.formGroup}>
+            <label style={S.formLabel}>Valuation Offered (£)</label>
+            <input
+              style={{...S.formInput, borderColor: errors.valuation_offered ? '#ef4444' : undefined}}
+              type="number"
+              value={form.valuation_offered || ''}
+              onChange={(e) => handleChange('valuation_offered', e.target.value)}
+              placeholder="0"
+            />
+            {errors.valuation_offered && <div style={{color: '#ef4444', fontSize: '12px', marginTop: '4px'}}>{errors.valuation_offered}</div>}
+          </div>
+
+          <div style={S.formGroup}>
+            <label style={S.formLabel}>Stage *</label>
+            <SelectInput
+              options={FUNDING_STAGES.map(s => ({value: s.id, label: s.name}))}
+              value={form.stage}
+              onChange={(val) => handleChange('stage', val)}
+              placeholder="Select stage"
+            />
+            {errors.stage && <div style={{color: '#ef4444', fontSize: '12px', marginTop: '4px'}}>{errors.stage}</div>}
+          </div>
+
+          <div style={S.formGroup}>
+            <label style={S.formLabel}>Intro Source</label>
+            <input
+              style={S.formInput}
+              type="text"
+              value={form.intro_source || ''}
+              onChange={(e) => handleChange('intro_source', e.target.value)}
+              placeholder="Who introduced you?"
+            />
+          </div>
+
+          <div style={S.formGroup}>
+            <label style={S.formLabel}>Next Action Date</label>
+            <input
+              style={S.formInput}
+              type="date"
+              value={form.next_action_date || ''}
+              onChange={(e) => handleChange('next_action_date', e.target.value)}
+            />
+          </div>
+
+          <div style={S.formGroup}>
+            <label style={S.formLabel}>Next Action Type</label>
+            <SelectInput
+              options={[
+                {value: 'Call', label: 'Call'},
+                {value: 'Email', label: 'Email'},
+                {value: 'Meeting', label: 'Meeting'},
+                {value: 'Follow-up', label: 'Follow-up'}
+              ]}
+              value={form.next_action_type || 'Follow-up'}
+              onChange={(val) => handleChange('next_action_type', val)}
+            />
+          </div>
+
+          <div style={S.formGroup}>
+            <label style={S.formLabel}>Owner</label>
+            <SelectInput
+              options={data.users.map(u => ({value: u.id, label: u.name}))}
+              value={form.owner_id || currentUser.id}
+              onChange={(val) => handleChange('owner_id', val)}
+            />
+          </div>
+
+          <div style={{...S.formGroup, gridColumn: '1 / -1'}}>
+            <label style={S.formLabel}>Notes</label>
+            <textarea
+              style={{...S.formInput, minHeight: '100px', fontFamily: 'inherit'}}
+              value={form.notes || ''}
+              onChange={(e) => handleChange('notes', e.target.value)}
+              placeholder="Add notes about this deal..."
+            />
+          </div>
+        </div>
+
+        <div style={{borderTop: '1px solid #27272a', padding: '16px 24px', display: 'flex', gap: '12px', justifyContent: 'flex-end'}}>
+          <button style={S.btnSecondary} onClick={onClose}>Cancel</button>
+          <button style={S.btnPrimary} onClick={handleSave}>Save Deal</button>
+        </div>
+      </div>
+    </Modal>
+  );
+};
+
+const KanbanView = ({ deals, searchQuery, onEditDeal }) => {
+  const [draggedDeal, setDraggedDeal] = useState(null);
+  const { updateFundingDeal } = useApp();
+
+  const filteredDeals = useMemo(() => {
+    return deals.filter(d => {
+      const query = searchQuery.toLowerCase();
+      return d.investor_name.toLowerCase().includes(query) ||
+             (d.fund_name || '').toLowerCase().includes(query);
+    });
+  }, [deals, searchQuery]);
+
+  const dealsByStage = useMemo(() => {
+    const map = {};
+    FUNDING_STAGES.forEach(s => { map[s.id] = []; });
+    filteredDeals.forEach(d => {
+      if (map[d.stage]) map[d.stage].push(d);
+    });
+    return map;
+  }, [filteredDeals]);
+
+  const handleDragStart = (e, deal) => {
+    setDraggedDeal(deal);
+    e.dataTransfer.effectAllowed = 'move';
+  };
+
+  const handleDragOver = (e) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+  };
+
+  const handleDrop = (e, stageId) => {
+    e.preventDefault();
+    if (draggedDeal && draggedDeal.stage !== stageId) {
+      updateFundingDeal(draggedDeal.id, { stage: stageId });
+    }
+    setDraggedDeal(null);
+  };
+
+  const handleDragEnd = () => {
+    setDraggedDeal(null);
+  };
+
+  return (
+    <div style={{display: 'grid', gridTemplateColumns: `repeat(${FUNDING_STAGES.length}, 1fr)`, gap: '16px', overflowX: 'auto', paddingBottom: '20px'}}>
+      {FUNDING_STAGES.map(stage => (
+        <div key={stage.id}>
+          <div style={{
+            background: stage.color,
+            color: '#fff',
+            padding: '8px 12px',
+            borderRadius: '6px',
+            fontSize: '13px',
+            fontWeight: '600',
+            marginBottom: '12px'
+          }}>
+            {stage.name} ({dealsByStage[stage.id].length})
+          </div>
+
+          <div
+            style={{
+              minHeight: '400px',
+              background: '#18181b',
+              border: '1px solid #27272a',
+              borderRadius: '8px',
+              padding: '12px',
+              gap: '12px',
+              display: 'flex',
+              flexDirection: 'column'
+            }}
+            onDragOver={handleDragOver}
+            onDrop={(e) => handleDrop(e, stage.id)}
+          >
+            {dealsByStage[stage.id].map(deal => (
+              <div
+                key={deal.id}
+                draggable
+                onDragStart={(e) => handleDragStart(e, deal)}
+                onDragEnd={handleDragEnd}
+                onClick={() => onEditDeal(deal)}
+                style={{
+                  background: '#27272a',
+                  border: `2px solid ${stage.color}`,
+                  borderRadius: '6px',
+                  padding: '12px',
+                  cursor: 'grab',
+                  opacity: draggedDeal?.id === deal.id ? 0.6 : 1,
+                  transition: 'all 0.2s',
+                  userSelect: 'none'
+                }}
+              >
+                <div style={{fontSize: '13px', fontWeight: '600', color: '#fafafa', marginBottom: '4px'}}>
+                  {deal.investor_name}
+                </div>
+                {deal.fund_name && (
+                  <div style={{fontSize: '12px', color: '#a1a1aa', marginBottom: '8px'}}>
+                    {deal.fund_name}
+                  </div>
+                )}
+                <div style={{fontSize: '12px', color: '#f97316', fontWeight: '600'}}>
+                  {deal.amount_target ? fmtCurrency(deal.amount_target) : 'TBD'}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+};
+
+const ListView = ({ deals, searchQuery, onEditDeal }) => {
+  const { data } = useApp();
+  const [sortCol, setSortCol] = useState('investor_name');
+  const [sortAsc, setSortAsc] = useState(true);
+
+  const filteredDeals = useMemo(() => {
+    let filtered = deals.filter(d => {
+      const query = searchQuery.toLowerCase();
+      return d.investor_name.toLowerCase().includes(query) ||
+             (d.fund_name || '').toLowerCase().includes(query);
+    });
+
+    return filtered.sort((a, b) => {
+      let aVal = a[sortCol];
+      let bVal = b[sortCol];
+      if (sortCol === 'owner_id') {
+        aVal = data.users.find(u => u.id === a.owner_id)?.name || '';
+        bVal = data.users.find(u => u.id === b.owner_id)?.name || '';
+      } else if (sortCol === 'stage') {
+        aVal = FUNDING_STAGE_MAP[a.stage]?.name || '';
+        bVal = FUNDING_STAGE_MAP[b.stage]?.name || '';
+      }
+      const cmp = aVal < bVal ? -1 : aVal > bVal ? 1 : 0;
+      return sortAsc ? cmp : -cmp;
+    });
+  }, [deals, searchQuery, sortCol, sortAsc, data]);
+
+  const handleSort = (col) => {
+    if (sortCol === col) {
+      setSortAsc(!sortAsc);
+    } else {
+      setSortCol(col);
+      setSortAsc(true);
+    }
+  };
+
+  const SortHeader = ({ label, col }) => (
+    <th
+      style={{...S.th, cursor: 'pointer', userSelect: 'none'}}
+      onClick={() => handleSort(col)}
+    >
+      {label} {sortCol === col && (sortAsc ? '↑' : '↓')}
+    </th>
+  );
+
+  return (
+    <div style={{overflowX: 'auto'}}>
+      <table style={S.table}>
+        <thead>
+          <tr>
+            <SortHeader label="Investor" col="investor_name" />
+            <SortHeader label="Fund" col="fund_name" />
+            <SortHeader label="Round" col="round_type" />
+            <SortHeader label="Amount Target" col="amount_target" />
+            <SortHeader label="Valuation" col="valuation_offered" />
+            <SortHeader label="Stage" col="stage" />
+            <SortHeader label="Next Action" col="next_action_date" />
+            <SortHeader label="Owner" col="owner_id" />
+          </tr>
+        </thead>
+        <tbody>
+          {filteredDeals.map(deal => (
+            <tr
+              key={deal.id}
+              onClick={() => onEditDeal(deal)}
+              style={{
+                cursor: 'pointer',
+                transition: 'background 0.2s',
+                ':hover': {background: '#27272a'}
+              }}
+              onMouseEnter={(e) => e.currentTarget.style.background = '#27272a'}
+              onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
+            >
+              <td style={S.td}>{deal.investor_name}</td>
+              <td style={S.td}>{deal.fund_name || '–'}</td>
+              <td style={S.td}>{deal.round_type}</td>
+              <td style={S.td}>{deal.amount_target ? fmtCurrency(deal.amount_target) : '–'}</td>
+              <td style={S.td}>{deal.valuation_offered ? fmtCurrency(deal.valuation_offered) : '–'}</td>
+              <td style={S.td}>
+                <StageBadge stage={FUNDING_STAGE_MAP[deal.stage]} />
+              </td>
+              <td style={S.td}>
+                {deal.next_action_date ? fmtDate(deal.next_action_date) : '–'}
+              </td>
+              <td style={S.td}>
+                {data.users.find(u => u.id === deal.owner_id)?.name || '–'}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      {filteredDeals.length === 0 && (
+        <div style={{padding: '40px', textAlign: 'center', color: '#a1a1aa'}}>
+          No funding deals found
+        </div>
+      )}
+    </div>
+  );
+};
+
+const FundingPage = () => {
+  const { data } = useApp();
+  const [view, setView] = useState('kanban'); // 'kanban' | 'list'
+  const [showModal, setShowModal] = useState(false);
+  const [editingDeal, setEditingDeal] = useState(null);
+  const [searchQuery, setSearchQuery] = useState('');
+
+  const deals = data.funding_deals || [];
+
+  const stats = useMemo(() => {
+    const total = deals.length;
+    const totalAmount = deals
+      .filter(d => d.stage !== 'closed')
+      .reduce((sum, d) => sum + (d.amount_target || 0), 0);
+    const hotLeads = deals.filter(d => d.stage === 'dd' || d.stage === 'term_sheet').length;
+    const closed = deals.filter(d => d.stage === 'closed').length;
+    return { total, totalAmount, hotLeads, closed };
+  }, [deals]);
+
+  const handleAddDeal = () => {
+    setEditingDeal(null);
+    setShowModal(true);
+  };
+
+  const handleEditDeal = (deal) => {
+    setEditingDeal(deal);
+    setShowModal(true);
+  };
+
+  const handleCloseModal = () => {
+    setShowModal(false);
+    setEditingDeal(null);
+  };
+
+  return (
+    <div style={{padding: '24px'}}>
+      <div style={{display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '28px'}}>
+        <div>
+          <h1 style={{fontSize: '28px', fontWeight: '700', color: '#fafafa', margin: 0, marginBottom: '8px'}}>
+            Funding Pipeline
+          </h1>
+          <p style={{color: '#a1a1aa', margin: 0, fontSize: '13px'}}>
+            Manage investor relationships and track funding rounds
+          </p>
+        </div>
+        <button style={S.btnPrimary} onClick={handleAddDeal}>
+          <I name="plus" size={16} color="#000" style={{marginRight: '8px'}} />
+          Add Deal
+        </button>
+      </div>
+
+      {/* Stats Row */}
+      <div style={{display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '16px', marginBottom: '28px'}}>
+        <div style={S.statCard}>
+          <div style={S.statVal}>{stats.total}</div>
+          <div style={S.statLabel}>Total Deals</div>
+        </div>
+        <div style={S.statCard}>
+          <div style={S.statVal}>{fmtCurrency(stats.totalAmount)}</div>
+          <div style={S.statLabel}>Amount Being Raised</div>
+        </div>
+        <div style={S.statCard}>
+          <div style={S.statVal}>{stats.hotLeads}</div>
+          <div style={S.statLabel}>Hot Leads (DD/Term Sheet)</div>
+        </div>
+        <div style={S.statCard}>
+          <div style={S.statVal}>{stats.closed}</div>
+          <div style={S.statLabel}>Closed Deals</div>
+        </div>
+      </div>
+
+      {/* Controls */}
+      <div style={{display: 'flex', gap: '16px', marginBottom: '24px', alignItems: 'center', flexWrap: 'wrap'}}>
+        <SearchBar
+          placeholder="Search by investor or fund name..."
+          value={searchQuery}
+          onChange={setSearchQuery}
+          style={{flex: 1, minWidth: '200px'}}
+        />
+        <div style={{display: 'flex', gap: '8px', background: '#18181b', border: '1px solid #27272a', borderRadius: '6px', padding: '4px'}}>
+          <button
+            style={{
+              ...S.btn,
+              background: view === 'kanban' ? '#f97316' : 'transparent',
+              color: view === 'kanban' ? '#000' : '#a1a1aa',
+              padding: '8px 16px',
+              borderRadius: '4px',
+              fontSize: '13px'
+            }}
+            onClick={() => setView('kanban')}
+          >
+            <I name="grid" size={16} style={{marginRight: '6px'}} color={view === 'kanban' ? '#000' : '#a1a1aa'} />
+            Kanban
+          </button>
+          <button
+            style={{
+              ...S.btn,
+              background: view === 'list' ? '#f97316' : 'transparent',
+              color: view === 'list' ? '#000' : '#a1a1aa',
+              padding: '8px 16px',
+              borderRadius: '4px',
+              fontSize: '13px'
+            }}
+            onClick={() => setView('list')}
+          >
+            <I name="list" size={16} style={{marginRight: '6px'}} color={view === 'list' ? '#000' : '#a1a1aa'} />
+            List
+          </button>
+        </div>
+      </div>
+
+      {/* View Content */}
+      {deals.length === 0 ? (
+        <EmptyState
+          icon="briefcase"
+          title="No funding deals yet"
+          description="Start tracking investor relationships and funding rounds."
+          action={{label: 'Add Your First Deal', onClick: handleAddDeal}}
+        />
+      ) : view === 'kanban' ? (
+        <KanbanView deals={deals} searchQuery={searchQuery} onEditDeal={handleEditDeal} />
+      ) : (
+        <ListView deals={deals} searchQuery={searchQuery} onEditDeal={handleEditDeal} />
+      )}
+
+      {/* Modal */}
+      <FundingDealModal
+        deal={editingDeal}
+        isOpen={showModal}
+        onClose={handleCloseModal}
+      />
+    </div>
+  );
+};
+
+// ==================== PARTNERSHIPS PIPELINE ====================
+
+const PARTNER_TYPES = ['Channel', 'Integration', 'Referral', 'Reseller', 'Technology', 'Distribution'];
+
+const PARTNER_STAGES = [
+  { id: 'identified', name: 'Identified', color: '#6b7280', desc: 'Potential partner spotted' },
+  { id: 'outreach', name: 'Outreach', color: '#8b5cf6', desc: 'Initial contact made' },
+  { id: 'evaluating', name: 'Evaluating', color: '#3b82f6', desc: 'Exploring partnership fit' },
+  { id: 'agreement', name: 'Agreement', color: '#f59e0b', desc: 'Terms being finalised' },
+  { id: 'live', name: 'Live', color: '#10b981', desc: 'Active partnership' },
+  { id: 'churned', name: 'Churned', color: '#dc2626', desc: 'Partnership ended' }
+];
+
+const PARTNER_STAGE_MAP = Object.fromEntries(PARTNER_STAGES.map(s => [s.id, s]));
+
+const NEXT_ACTION_TYPES = ['Call', 'Email', 'Meeting', 'Follow-up'];
+
+const PartnerStageBadge = ({ stage }) => {
+  const s = PARTNER_STAGE_MAP[stage];
+  if (!s) return null;
+  return <span style={{ ...S.badge, background: s.color + '22', color: s.color }}>{s.name}</span>;
+};
+
+const PartnershipModal = ({ isOpen, partnership, onClose, onSave }) => {
+  const { data } = useApp();
+  const [form, setForm] = useState({
+    partner_name: '',
+    partner_type: '',
+    contact_id: '',
+    website: '',
+    stage: 'identified',
+    channel_description: '',
+    next_action_date: '',
+    next_action_type: 'Email',
+    notes: '',
+    owner_id: ''
+  });
+
+  const [errors, setErrors] = useState({});
+
+  useEffect(() => {
+    if (partnership) {
+      setForm(partnership);
+      setErrors({});
+    } else {
+      setForm({
+        partner_name: '',
+        partner_type: '',
+        contact_id: '',
+        website: '',
+        stage: 'identified',
+        channel_description: '',
+        next_action_date: '',
+        next_action_type: 'Email',
+        notes: '',
+        owner_id: ''
+      });
+      setErrors({});
+    }
+  }, [partnership, isOpen]);
+
+  const handleChange = useCallback((field, value) => {
+    setForm(prev => ({ ...prev, [field]: value }));
+    if (errors[field]) {
+      setErrors(prev => ({ ...prev, [field]: '' }));
+    }
+  }, [errors]);
+
+  const validate = () => {
+    const newErrors = {};
+    if (!form.partner_name.trim()) newErrors.partner_name = 'Partner name required';
+    if (!form.partner_type) newErrors.partner_type = 'Partner type required';
+    if (!form.owner_id) newErrors.owner_id = 'Owner required';
+    setErrors(newErrors);
+    return Object.keys(newErrors).length === 0;
+  };
+
+  const handleSave = () => {
+    if (validate()) {
+      onSave(form);
+    }
+  };
+
+  return (
+    <Modal isOpen={isOpen} onClose={onClose} size="lg">
+      <div style={{ padding: '24px' }}>
+        <h2 style={{ ...S.cardTitle, marginBottom: '24px' }}>
+          {partnership ? 'Edit Partnership' : 'New Partnership'}
+        </h2>
+
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', marginBottom: '16px' }}>
+          <div style={S.formGroup}>
+            <label style={S.formLabel}>Partner Name *</label>
+            <input
+              type="text"
+              style={{ ...S.formInput, borderColor: errors.partner_name ? '#dc2626' : '' }}
+              value={form.partner_name}
+              onChange={(e) => handleChange('partner_name', e.target.value)}
+              placeholder="e.g., Acme Distribution"
+            />
+            {errors.partner_name && <div style={{ color: '#dc2626', fontSize: '12px', marginTop: '4px' }}>{errors.partner_name}</div>}
+          </div>
+
+          <div style={S.formGroup}>
+            <label style={S.formLabel}>Type *</label>
+            <SelectInput
+              value={form.partner_type}
+              onChange={(val) => handleChange('partner_type', val)}
+              options={PARTNER_TYPES}
+              error={!!errors.partner_type}
+            />
+            {errors.partner_type && <div style={{ color: '#dc2626', fontSize: '12px', marginTop: '4px' }}>{errors.partner_type}</div>}
+          </div>
+        </div>
+
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', marginBottom: '16px' }}>
+          <div style={S.formGroup}>
+            <label style={S.formLabel}>Contact</label>
+            <SelectInput
+              value={form.contact_id}
+              onChange={(val) => handleChange('contact_id', val)}
+              options={data.contacts.map(c => ({ value: c.id, label: c.full_name || c.email }))}
+            />
+          </div>
+
+          <div style={S.formGroup}>
+            <label style={S.formLabel}>Website</label>
+            <input
+              type="url"
+              style={S.formInput}
+              value={form.website}
+              onChange={(e) => handleChange('website', e.target.value)}
+              placeholder="https://example.com"
+            />
+          </div>
+        </div>
+
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', marginBottom: '16px' }}>
+          <div style={S.formGroup}>
+            <label style={S.formLabel}>Stage</label>
+            <SelectInput
+              value={form.stage}
+              onChange={(val) => handleChange('stage', val)}
+              options={PARTNER_STAGES.map(s => ({ value: s.id, label: s.name }))}
+            />
+          </div>
+
+          <div style={S.formGroup}>
+            <label style={S.formLabel}>Owner *</label>
+            <SelectInput
+              value={form.owner_id}
+              onChange={(val) => handleChange('owner_id', val)}
+              options={data.users.map(u => ({ value: u.id, label: u.full_name || u.email }))}
+              error={!!errors.owner_id}
+            />
+            {errors.owner_id && <div style={{ color: '#dc2626', fontSize: '12px', marginTop: '4px' }}>{errors.owner_id}</div>}
+          </div>
+        </div>
+
+        <div style={S.formGroup}>
+          <label style={S.formLabel}>Channel Description</label>
+          <textarea
+            style={{ ...S.formInput, minHeight: '80px', fontFamily: 'inherit' }}
+            value={form.channel_description}
+            onChange={(e) => handleChange('channel_description', e.target.value)}
+            placeholder="Describe the partnership, distribution model, and benefits..."
+          />
+        </div>
+
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', marginBottom: '16px' }}>
+          <div style={S.formGroup}>
+            <label style={S.formLabel}>Next Action Date</label>
+            <input
+              type="date"
+              style={S.formInput}
+              value={form.next_action_date}
+              onChange={(e) => handleChange('next_action_date', e.target.value)}
+            />
+          </div>
+
+          <div style={S.formGroup}>
+            <label style={S.formLabel}>Next Action Type</label>
+            <SelectInput
+              value={form.next_action_type}
+              onChange={(val) => handleChange('next_action_type', val)}
+              options={NEXT_ACTION_TYPES}
+            />
+          </div>
+        </div>
+
+        <div style={S.formGroup}>
+          <label style={S.formLabel}>Notes</label>
+          <textarea
+            style={{ ...S.formInput, minHeight: '80px', fontFamily: 'inherit' }}
+            value={form.notes}
+            onChange={(e) => handleChange('notes', e.target.value)}
+            placeholder="Any additional notes about this partnership..."
+          />
+        </div>
+
+        <div style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end', marginTop: '24px' }}>
+          <button style={S.btnSecondary} onClick={onClose}>Cancel</button>
+          <button style={S.btnPrimary} onClick={handleSave}>Save Partnership</button>
+        </div>
+      </div>
+    </Modal>
+  );
+};
+
+const KanbanView = ({ partnerships, onCardClick, onCardDrop }) => {
+  const handleDragOver = useCallback((e) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+  }, []);
+
+  const handleDrop = useCallback((stageId, e) => {
+    e.preventDefault();
+    const partnerId = e.dataTransfer.getData('partnerId');
+    onCardDrop(partnerId, stageId);
+  }, [onCardDrop]);
+
+  return (
+    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '16px' }}>
+      {PARTNER_STAGES.map(stage => {
+        const stagePartnerships = partnerships.filter(p => p.stage === stage.id);
+        return (
+          <div key={stage.id} style={{
+            background: '#18181b',
+            border: '1px solid #27272a',
+            borderRadius: '8px',
+            padding: '16px',
+            minHeight: '400px'
+          }}>
+            <div style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px',
+              marginBottom: '16px',
+              paddingBottom: '12px',
+              borderBottom: `2px solid ${stage.color}`
+            }}>
+              <div style={{ width: '12px', height: '12px', background: stage.color, borderRadius: '50%' }} />
+              <h3 style={{ margin: 0, color: '#fafafa', fontSize: '14px', fontWeight: '600' }}>{stage.name}</h3>
+              <span style={{ marginLeft: 'auto', background: '#27272a', color: '#a1a1aa', padding: '2px 8px', borderRadius: '4px', fontSize: '12px' }}>
+                {stagePartnerships.length}
+              </span>
+            </div>
+
+            <div
+              onDragOver={handleDragOver}
+              onDrop={(e) => handleDrop(stage.id, e)}
+              style={{ minHeight: '350px' }}
+            >
+              {stagePartnerships.length === 0 ? (
+                <div style={{ color: '#71717a', fontSize: '12px', textAlign: 'center', paddingTop: '40px' }}>
+                  Drop here
+                </div>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                  {stagePartnerships.map(p => (
+                    <div
+                      key={p.id}
+                      draggable
+                      onDragStart={(e) => e.dataTransfer.setData('partnerId', p.id)}
+                      onClick={() => onCardClick(p)}
+                      style={{
+                        background: '#27272a',
+                        border: '1px solid #3f3f46',
+                        borderRadius: '6px',
+                        padding: '12px',
+                        cursor: 'grab',
+                        transition: 'all 0.2s',
+                        ':hover': { borderColor: stage.color, boxShadow: `0 0 12px ${stage.color}22` }
+                      }}
+                      onMouseEnter={(e) => {
+                        e.currentTarget.style.borderColor = stage.color;
+                        e.currentTarget.style.boxShadow = `0 0 12px ${stage.color}22`;
+                      }}
+                      onMouseLeave={(e) => {
+                        e.currentTarget.style.borderColor = '#3f3f46';
+                        e.currentTarget.style.boxShadow = 'none';
+                      }}
+                    >
+                      <div style={{ fontWeight: '600', color: '#fafafa', fontSize: '14px', marginBottom: '4px' }}>
+                        {p.partner_name}
+                      </div>
+                      <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                        <span style={{ ...S.badge, background: '#3f3f46', color: '#a1a1aa', fontSize: '11px', padding: '2px 6px' }}>
+                          {p.partner_type}
+                        </span>
+                      </div>
+                      {p.next_action_date && (
+                        <div style={{ fontSize: '11px', color: '#71717a', marginTop: '8px' }}>
+                          <I name="calendar" size={12} color="#71717a" style={{ marginRight: '4px' }} />
+                          {fmtDate(p.next_action_date)}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+};
+
+const ListView = ({ partnerships, onEditClick, onDeleteClick, sortBy, onSort }) => {
+  const sortedPartnerships = useMemo(() => {
+    const sorted = [...partnerships];
+    if (sortBy === 'name') sorted.sort((a, b) => a.partner_name.localeCompare(b.partner_name));
+    if (sortBy === 'type') sorted.sort((a, b) => a.partner_type.localeCompare(b.partner_type));
+    if (sortBy === 'stage') sorted.sort((a, b) => {
+      const stageA = PARTNER_STAGES.findIndex(s => s.id === a.stage);
+      const stageB = PARTNER_STAGES.findIndex(s => s.id === b.stage);
+      return stageA - stageB;
+    });
+    return sorted;
+  }, [partnerships, sortBy]);
+
+  const { data } = useApp();
+
+  const getSortArrow = (column) => {
+    if (sortBy !== column) return ' ↕';
+    return sortBy === column ? ' ↓' : ' ↑';
+  };
+
+  return (
+    <div style={{ overflowX: 'auto' }}>
+      <table style={S.table}>
+        <thead>
+          <tr>
+            <th style={S.th} onClick={() => onSort('name')} style={{ cursor: 'pointer', ...S.th }}>
+              Partner {getSortArrow('name')}
+            </th>
+            <th style={S.th} onClick={() => onSort('type')} style={{ cursor: 'pointer', ...S.th }}>
+              Type {getSortArrow('type')}
+            </th>
+            <th style={S.th} onClick={() => onSort('stage')} style={{ cursor: 'pointer', ...S.th }}>
+              Stage {getSortArrow('stage')}
+            </th>
+            <th style={S.th}>Channel</th>
+            <th style={S.th}>Next Action</th>
+            <th style={S.th}>Owner</th>
+            <th style={S.th}>Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          {sortedPartnerships.map(p => {
+            const contact = data.contacts.find(c => c.id === p.contact_id);
+            const owner = data.users.find(u => u.id === p.owner_id);
+            return (
+              <tr key={p.id}>
+                <td style={S.td}>
+                  <div style={{ fontWeight: '500', color: '#fafafa' }}>{p.partner_name}</div>
+                  {p.website && (
+                    <div style={{ fontSize: '11px', color: '#71717a', marginTop: '4px' }}>
+                      <I name="link" size={10} color="#71717a" style={{ marginRight: '2px' }} />
+                      {p.website}
+                    </div>
+                  )}
+                </td>
+                <td style={S.td}>
+                  <span style={{ ...S.badge, background: '#3f3f46', color: '#a1a1aa', fontSize: '11px' }}>
+                    {p.partner_type}
+                  </span>
+                </td>
+                <td style={S.td}>
+                  <PartnerStageBadge stage={p.stage} />
+                </td>
+                <td style={S.td}>
+                  <div style={{ fontSize: '12px', color: '#a1a1aa', maxWidth: '150px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                    {p.channel_description || '—'}
+                  </div>
+                </td>
+                <td style={S.td}>
+                  {p.next_action_date ? (
+                    <div style={{ fontSize: '12px', color: '#a1a1aa' }}>
+                      <div>{fmtDate(p.next_action_date)}</div>
+                      <div style={{ fontSize: '10px', color: '#71717a' }}>{p.next_action_type}</div>
+                    </div>
+                  ) : (
+                    <div style={{ fontSize: '12px', color: '#71717a' }}>—</div>
+                  )}
+                </td>
+                <td style={S.td}>
+                  {owner ? <Avatar name={owner.full_name || owner.email} size={28} /> : <div style={{ fontSize: '12px', color: '#71717a' }}>—</div>}
+                </td>
+                <td style={S.td}>
+                  <div style={{ display: 'flex', gap: '8px' }}>
+                    <button
+                      style={S.btnGhost}
+                      onClick={() => onEditClick(p)}
+                      title="Edit"
+                    >
+                      <I name="edit" size={16} color="#f97316" />
+                    </button>
+                    <button
+                      style={S.btnGhost}
+                      onClick={() => onDeleteClick(p)}
+                      title="Delete"
+                    >
+                      <I name="trash" size={16} color="#dc2626" />
+                    </button>
+                  </div>
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
+};
+
+const PartnershipsPage = () => {
+  const { data, addPartnership, updatePartnership, deletePartnership, addActivity, showToast } = useApp();
+  const [view, setView] = useState('kanban');
+  const [searchTerm, setSearchTerm] = useState('');
+  const [sortBy, setSortBy] = useState('stage');
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [editingPartnership, setEditingPartnership] = useState(null);
+  const [deleteConfirm, setDeleteConfirm] = useState(null);
+
+  const filteredPartnerships = useMemo(() => {
+    const query = searchTerm.toLowerCase();
+    return data.partnerships.filter(p =>
+      p.partner_name.toLowerCase().includes(query) ||
+      p.partner_type.toLowerCase().includes(query) ||
+      (p.channel_description && p.channel_description.toLowerCase().includes(query)) ||
+      (p.notes && p.notes.toLowerCase().includes(query))
+    );
+  }, [data.partnerships, searchTerm]);
+
+  const stats = useMemo(() => {
+    const total = filteredPartnerships.length;
+    const live = filteredPartnerships.filter(p => p.stage === 'live').length;
+    const inPipeline = filteredPartnerships.filter(p => p.stage !== 'live' && p.stage !== 'churned').length;
+    const churned = filteredPartnerships.filter(p => p.stage === 'churned').length;
+    return { total, live, inPipeline, churned };
+  }, [filteredPartnerships]);
+
+  const handleAddNew = useCallback(() => {
+    setEditingPartnership(null);
+    setIsModalOpen(true);
+  }, []);
+
+  const handleEditClick = useCallback((partnership) => {
+    setEditingPartnership(partnership);
+    setIsModalOpen(true);
+  }, []);
+
+  const handleModalClose = useCallback(() => {
+    setIsModalOpen(false);
+    setEditingPartnership(null);
+  }, []);
+
+  const handleSavePartnership = useCallback((form) => {
+    if (editingPartnership) {
+      updatePartnership(editingPartnership.id, form);
+      showToast({ type: 'success', message: 'Partnership updated' });
+      addActivity({
+        type: 'partnership_update',
+        description: `Updated partnership: ${form.partner_name}`,
+        entity_type: 'partnership',
+        entity_id: editingPartnership.id
+      });
+    } else {
+      addPartnership(form);
+      showToast({ type: 'success', message: 'Partnership added' });
+      addActivity({
+        type: 'partnership_create',
+        description: `Created partnership: ${form.partner_name}`,
+        entity_type: 'partnership'
+      });
+    }
+    handleModalClose();
+  }, [editingPartnership, updatePartnership, addPartnership, showToast, addActivity, handleModalClose]);
+
+  const handleDeleteClick = useCallback((partnership) => {
+    setDeleteConfirm(partnership);
+  }, []);
+
+  const handleConfirmDelete = useCallback(() => {
+    if (deleteConfirm) {
+      deletePartnership(deleteConfirm.id);
+      showToast({ type: 'success', message: 'Partnership deleted' });
+      addActivity({
+        type: 'partnership_delete',
+        description: `Deleted partnership: ${deleteConfirm.partner_name}`,
+        entity_type: 'partnership',
+        entity_id: deleteConfirm.id
+      });
+      setDeleteConfirm(null);
+    }
+  }, [deleteConfirm, deletePartnership, showToast, addActivity]);
+
+  const handleCardDrop = useCallback((partnerId, newStageId) => {
+    const partnership = data.partnerships.find(p => p.id === partnerId);
+    if (partnership && partnership.stage !== newStageId) {
+      updatePartnership(partnerId, { ...partnership, stage: newStageId });
+      const stageName = PARTNER_STAGE_MAP[newStageId]?.name || newStageId;
+      showToast({ type: 'success', message: `Moved to ${stageName}` });
+      addActivity({
+        type: 'partnership_stage_change',
+        description: `Moved ${partnership.partner_name} to ${stageName}`,
+        entity_type: 'partnership',
+        entity_id: partnerId
+      });
+    }
+  }, [data.partnerships, updatePartnership, showToast, addActivity]);
+
+  return (
+    <div style={{ padding: '24px' }}>
+      <div style={{ marginBottom: '24px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px' }}>
+          <h1 style={{ ...S.cardTitle, margin: 0 }}>
+            <I name="building" size={24} color="#f97316" style={{ marginRight: '8px', verticalAlign: 'middle' }} />
+            Partnerships & Distribution
+          </h1>
+          <button style={S.btnPrimary} onClick={handleAddNew}>
+            <I name="plus" size={16} color="#fff" style={{ marginRight: '6px' }} />
+            Add Partnership
+          </button>
+        </div>
+
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '16px', marginBottom: '24px' }}>
+          <div style={S.statCard}>
+            <div style={S.statVal}>{stats.total}</div>
+            <div style={S.statLabel}>Total Partnerships</div>
+          </div>
+          <div style={S.statCard}>
+            <div style={{ ...S.statVal, color: '#10b981' }}>{stats.live}</div>
+            <div style={S.statLabel}>Live Partnerships</div>
+          </div>
+          <div style={S.statCard}>
+            <div style={{ ...S.statVal, color: '#3b82f6' }}>{stats.inPipeline}</div>
+            <div style={S.statLabel}>In Pipeline</div>
+          </div>
+          <div style={S.statCard}>
+            <div style={{ ...S.statVal, color: '#dc2626' }}>{stats.churned}</div>
+            <div style={S.statLabel}>Churned</div>
+          </div>
+        </div>
+
+        <div style={{ display: 'flex', gap: '12px', alignItems: 'center', marginBottom: '16px' }}>
+          <div style={{ flex: 1 }}>
+            <SearchBar
+              placeholder="Search partnerships..."
+              value={searchTerm}
+              onChange={setSearchTerm}
+            />
+          </div>
+          <div style={{ display: 'flex', gap: '8px', background: '#18181b', border: '1px solid #27272a', borderRadius: '6px', padding: '4px' }}>
+            <button
+              style={{
+                ...S.btnGhost,
+                background: view === 'kanban' ? '#27272a' : 'transparent',
+                color: view === 'kanban' ? '#f97316' : '#a1a1aa'
+              }}
+              onClick={() => setView('kanban')}
+              title="Kanban view"
+            >
+              <I name="grid" size={18} />
+            </button>
+            <button
+              style={{
+                ...S.btnGhost,
+                background: view === 'list' ? '#27272a' : 'transparent',
+                color: view === 'list' ? '#f97316' : '#a1a1aa'
+              }}
+              onClick={() => setView('list')}
+              title="List view"
+            >
+              <I name="list" size={18} />
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {filteredPartnerships.length === 0 ? (
+        <EmptyState
+          icon="building"
+          title="No Partnerships Found"
+          message={searchTerm ? 'Try adjusting your search' : 'Add your first partnership to get started'}
+          action={!searchTerm && {
+            label: 'Add Partnership',
+            onClick: handleAddNew
+          }}
+        />
+      ) : view === 'kanban' ? (
+        <KanbanView
+          partnerships={filteredPartnerships}
+          onCardClick={handleEditClick}
+          onCardDrop={handleCardDrop}
+        />
+      ) : (
+        <ListView
+          partnerships={filteredPartnerships}
+          onEditClick={handleEditClick}
+          onDeleteClick={handleDeleteClick}
+          sortBy={sortBy}
+          onSort={setSortBy}
+        />
+      )}
+
+      <PartnershipModal
+        isOpen={isModalOpen}
+        partnership={editingPartnership}
+        onClose={handleModalClose}
+        onSave={handleSavePartnership}
+      />
+
+      <ConfirmModal
+        isOpen={!!deleteConfirm}
+        title="Delete Partnership?"
+        message={`Are you sure you want to delete "${deleteConfirm?.partner_name}"? This cannot be undone.`}
+        confirmText="Delete"
+        onConfirm={handleConfirmDelete}
+        onCancel={() => setDeleteConfirm(null)}
+        isDangerous
+      />
     </div>
   );
 };
@@ -2680,6 +4261,8 @@ const Sidebar=()=>{
     {id:'dashboard',icon:'home',label:'Dashboard'},
     {id:'pipeline',icon:'grid',label:'Pipeline'},
     {id:'restaurants',icon:'building',label:'Restaurants',badge:overdueCount||null},
+    {id:'funding',icon:'dollar',label:'Funding'},
+    {id:'partners',icon:'link',label:'Partners'},
     {id:'contacts',icon:'users',label:'Contacts'},
     {id:'network',icon:'linkedin',label:'My Network'},
     {id:'targets',icon:'target',label:'Targets'},
@@ -2723,11 +4306,11 @@ const PageHeader=({title,children})=>(
   </div>
 );
 
-const pageTitles={dashboard:'Dashboard',pipeline:'Pipeline',restaurants:'Restaurants',contacts:'Contacts',network:'My Network',targets:'Targets & Leaderboard',activities:'Activities',admin:'Admin'};
+const pageTitles={dashboard:'Dashboard',pipeline:'Pipeline',restaurants:'Restaurants',contacts:'Contacts',network:'My Network',targets:'Targets & Leaderboard',activities:'Activities',admin:'Admin',funding:'Funding Pipeline',partners:'Partnerships'};
 
 const AppContent=()=>{
   const{page}=useApp();
-  const pages={dashboard:Dashboard,pipeline:Pipeline,restaurants:RestaurantsList,contacts:ContactsPage,network:LinkedInPage,targets:TargetsPage,activities:ActivitiesPage,admin:AdminPage};
+  const pages={dashboard:Dashboard,pipeline:Pipeline,restaurants:RestaurantsList,contacts:ContactsPage,network:LinkedInPage,targets:TargetsPage,activities:ActivitiesPage,admin:AdminPage,funding:FundingPage,partners:PartnershipsPage};
   const Page=pages[page]||Dashboard;
   return(
     <div style={S.main}>
