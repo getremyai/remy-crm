@@ -3058,1192 +3058,285 @@ ${rActs.length>0?'\nRecent Activity:\n'+rActs.map(a=>'  ['+fmtDate(a.occurred_at
 };
 
 // ==================== FUNDING PIPELINE ====================
+const FundingStageBadge=({stage})=>{const s=FUNDING_STAGE_MAP[stage];if(!s)return null;return <span style={{...S.badge,background:s.color+'22',color:s.color}}>{s.name}</span>};
 
-const FundingDealModal = ({ deal, isOpen, onClose }) => {
-  const { data, addFundingDeal, updateFundingDeal, currentUser, showToast } = useApp();
-  const [form, setForm] = useState(deal || {});
-  const [errors, setErrors] = useState({});
-
-  useEffect(() => {
-    setForm(deal || {});
-    setErrors({});
-  }, [deal, isOpen]);
-
-  const handleChange = (field, value) => {
-    setForm(prev => ({ ...prev, [field]: value }));
-    if (errors[field]) {
-      setErrors(prev => ({ ...prev, [field]: null }));
-    }
-  };
-
-  const validate = () => {
-    const newErrors = {};
-    if (!form.investor_name?.trim()) newErrors.investor_name = 'Investor name required';
-    if (!form.round_type) newErrors.round_type = 'Round type required';
-    if (!form.stage) newErrors.stage = 'Stage required';
-    if (form.amount_target && isNaN(form.amount_target)) newErrors.amount_target = 'Must be a number';
-    if (form.valuation_offered && isNaN(form.valuation_offered)) newErrors.valuation_offered = 'Must be a number';
-    setErrors(newErrors);
-    return Object.keys(newErrors).length === 0;
-  };
-
-  const handleSave = async () => {
-    if (!validate()) return;
-
-    const payload = {
-      investor_name: form.investor_name,
-      fund_name: form.fund_name || '',
-      contact_id: form.contact_id || null,
-      round_type: form.round_type,
-      amount_target: form.amount_target ? parseFloat(form.amount_target) : 0,
-      valuation_offered: form.valuation_offered ? parseFloat(form.valuation_offered) : 0,
-      stage: form.stage,
-      intro_source: form.intro_source || '',
-      next_action_date: form.next_action_date || null,
-      next_action_type: form.next_action_type || 'Follow-up',
-      notes: form.notes || '',
-      owner_id: form.owner_id || currentUser.id
-    };
-
-    if (form.id) {
-      updateFundingDeal(form.id, payload);
-      showToast('Funding deal updated', 'success');
-    } else {
-      addFundingDeal(payload);
-      showToast('Funding deal added', 'success');
-    }
+const FundingDealModal=({deal,onClose})=>{
+  const{data,addFundingDeal,updateFundingDeal,currentUser,showToast}=useApp();
+  const[form,setForm]=useState({investor_name:'',fund_name:'',contact_id:'',round_type:'',amount_target:'',valuation_offered:'',stage:'identified',intro_source:'',next_action_date:'',next_action_type:'Call',notes:'',owner_id:currentUser?.id,...(deal||{})});
+  const set=(k,v)=>setForm(f=>({...f,[k]:v}));
+  const save=()=>{
+    if(!form.investor_name.trim()){showToast('Investor name required','error');return}
+    const payload={investor_name:form.investor_name,fund_name:form.fund_name||'',contact_id:form.contact_id||null,round_type:form.round_type||'',amount_target:parseFloat(form.amount_target)||0,valuation_offered:parseFloat(form.valuation_offered)||0,stage:form.stage,intro_source:form.intro_source||'',next_action_date:form.next_action_date||null,next_action_type:form.next_action_type||'',notes:form.notes||'',owner_id:form.owner_id||currentUser?.id};
+    if(deal?.id){updateFundingDeal(deal.id,payload)}else{addFundingDeal(payload)}
     onClose();
   };
-
-  const contactName = form.contact_id
-    ? data.contacts.find(c => c.id === form.contact_id)?.name || ''
-    : '';
-
-  return (
-    <Modal isOpen={isOpen} onClose={onClose} size="lg">
-      <div style={S.modalContent}>
-        <div style={S.modalHeader}>
-          <h2 style={S.cardTitle}>{form.id ? 'Edit Funding Deal' : 'New Funding Deal'}</h2>
-          <button onClick={onClose} style={{...S.btn, background: 'transparent', padding: '4px'}}>
-            <I name="x" size={20} color="#a1a1aa" />
-          </button>
-        </div>
-
-        <div style={{padding: '24px', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px', maxHeight: '70vh', overflowY: 'auto'}}>
-
-          <div style={S.formGroup}>
-            <label style={S.formLabel}>Investor Name *</label>
-            <input
-              style={{...S.formInput, borderColor: errors.investor_name ? '#ef4444' : undefined}}
-              type="text"
-              value={form.investor_name || ''}
-              onChange={(e) => handleChange('investor_name', e.target.value)}
-              placeholder="e.g., Accel Partners"
-            />
-            {errors.investor_name && <div style={{color: '#ef4444', fontSize: '12px', marginTop: '4px'}}>{errors.investor_name}</div>}
-          </div>
-
-          <div style={S.formGroup}>
-            <label style={S.formLabel}>Fund Name</label>
-            <input
-              style={S.formInput}
-              type="text"
-              value={form.fund_name || ''}
-              onChange={(e) => handleChange('fund_name', e.target.value)}
-              placeholder="e.g., Accel Ventures IV"
-            />
-          </div>
-
-          <div style={S.formGroup}>
-            <label style={S.formLabel}>Contact</label>
-            <SelectInput
-              options={data.contacts.map(c => ({value: c.id, label: c.name}))}
-              value={form.contact_id}
-              onChange={(val) => handleChange('contact_id', val)}
-              placeholder="Select contact"
-            />
-          </div>
-
-          <div style={S.formGroup}>
-            <label style={S.formLabel}>Round Type *</label>
-            <SelectInput
-              options={ROUND_TYPES.map(rt => ({value: rt, label: rt}))}
-              value={form.round_type}
-              onChange={(val) => handleChange('round_type', val)}
-              placeholder="Select round type"
-            />
-            {errors.round_type && <div style={{color: '#ef4444', fontSize: '12px', marginTop: '4px'}}>{errors.round_type}</div>}
-          </div>
-
-          <div style={S.formGroup}>
-            <label style={S.formLabel}>Amount Target (£)</label>
-            <input
-              style={{...S.formInput, borderColor: errors.amount_target ? '#ef4444' : undefined}}
-              type="number"
-              value={form.amount_target || ''}
-              onChange={(e) => handleChange('amount_target', e.target.value)}
-              placeholder="0"
-            />
-            {errors.amount_target && <div style={{color: '#ef4444', fontSize: '12px', marginTop: '4px'}}>{errors.amount_target}</div>}
-          </div>
-
-          <div style={S.formGroup}>
-            <label style={S.formLabel}>Valuation Offered (£)</label>
-            <input
-              style={{...S.formInput, borderColor: errors.valuation_offered ? '#ef4444' : undefined}}
-              type="number"
-              value={form.valuation_offered || ''}
-              onChange={(e) => handleChange('valuation_offered', e.target.value)}
-              placeholder="0"
-            />
-            {errors.valuation_offered && <div style={{color: '#ef4444', fontSize: '12px', marginTop: '4px'}}>{errors.valuation_offered}</div>}
-          </div>
-
-          <div style={S.formGroup}>
-            <label style={S.formLabel}>Stage *</label>
-            <SelectInput
-              options={FUNDING_STAGES.map(s => ({value: s.id, label: s.name}))}
-              value={form.stage}
-              onChange={(val) => handleChange('stage', val)}
-              placeholder="Select stage"
-            />
-            {errors.stage && <div style={{color: '#ef4444', fontSize: '12px', marginTop: '4px'}}>{errors.stage}</div>}
-          </div>
-
-          <div style={S.formGroup}>
-            <label style={S.formLabel}>Intro Source</label>
-            <input
-              style={S.formInput}
-              type="text"
-              value={form.intro_source || ''}
-              onChange={(e) => handleChange('intro_source', e.target.value)}
-              placeholder="Who introduced you?"
-            />
-          </div>
-
-          <div style={S.formGroup}>
-            <label style={S.formLabel}>Next Action Date</label>
-            <input
-              style={S.formInput}
-              type="date"
-              value={form.next_action_date || ''}
-              onChange={(e) => handleChange('next_action_date', e.target.value)}
-            />
-          </div>
-
-          <div style={S.formGroup}>
-            <label style={S.formLabel}>Next Action Type</label>
-            <SelectInput
-              options={[
-                {value: 'Call', label: 'Call'},
-                {value: 'Email', label: 'Email'},
-                {value: 'Meeting', label: 'Meeting'},
-                {value: 'Follow-up', label: 'Follow-up'}
-              ]}
-              value={form.next_action_type || 'Follow-up'}
-              onChange={(val) => handleChange('next_action_type', val)}
-            />
-          </div>
-
-          <div style={S.formGroup}>
-            <label style={S.formLabel}>Owner</label>
-            <SelectInput
-              options={data.users.map(u => ({value: u.id, label: u.name}))}
-              value={form.owner_id || currentUser.id}
-              onChange={(val) => handleChange('owner_id', val)}
-            />
-          </div>
-
-          <div style={{...S.formGroup, gridColumn: '1 / -1'}}>
-            <label style={S.formLabel}>Notes</label>
-            <textarea
-              style={{...S.formInput, minHeight: '100px', fontFamily: 'inherit'}}
-              value={form.notes || ''}
-              onChange={(e) => handleChange('notes', e.target.value)}
-              placeholder="Add notes about this deal..."
-            />
-          </div>
-        </div>
-
-        <div style={{borderTop: '1px solid #27272a', padding: '16px 24px', display: 'flex', gap: '12px', justifyContent: 'flex-end'}}>
-          <button style={S.btnSecondary} onClick={onClose}>Cancel</button>
-          <button style={S.btnPrimary} onClick={handleSave}>Save Deal</button>
-        </div>
+  return(
+    <Modal title={deal?'Edit Funding Deal':'New Funding Deal'} onClose={onClose} wide footer={<>
+      <button style={{...S.btn,...S.btnSecondary}} onClick={onClose}>Cancel</button>
+      <button style={{...S.btn,...S.btnPrimary}} onClick={save}>Save Deal</button>
+    </>}>
+      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:16}}>
+        <div style={S.formGroup}><label style={S.formLabel}>Investor Name *</label><input style={S.formInput} value={form.investor_name} onChange={e=>set('investor_name',e.target.value)} placeholder="e.g. Accel Partners"/></div>
+        <div style={S.formGroup}><label style={S.formLabel}>Fund Name</label><input style={S.formInput} value={form.fund_name} onChange={e=>set('fund_name',e.target.value)} placeholder="e.g. Accel Fund IV"/></div>
+        <div style={S.formGroup}><label style={S.formLabel}>Round Type</label><SelectInput value={form.round_type} onChange={v=>set('round_type',v)} options={ROUND_TYPES} placeholder="Select round..."/></div>
+        <div style={S.formGroup}><label style={S.formLabel}>Stage</label><SelectInput value={form.stage} onChange={v=>set('stage',v)} options={FUNDING_STAGES.map(s=>({value:s.id,label:s.name}))}/></div>
+        <div style={S.formGroup}><label style={S.formLabel}>Amount Target (£)</label><input style={S.formInput} type="number" value={form.amount_target} onChange={e=>set('amount_target',e.target.value)} placeholder="0"/></div>
+        <div style={S.formGroup}><label style={S.formLabel}>Valuation Offered (£)</label><input style={S.formInput} type="number" value={form.valuation_offered} onChange={e=>set('valuation_offered',e.target.value)} placeholder="0"/></div>
+        <div style={S.formGroup}><label style={S.formLabel}>Contact</label><SelectInput value={form.contact_id} onChange={v=>set('contact_id',v)} options={data.contacts.map(c=>({value:c.id,label:c.full_name}))} placeholder="Select contact..."/></div>
+        <div style={S.formGroup}><label style={S.formLabel}>Intro Source</label><input style={S.formInput} value={form.intro_source} onChange={e=>set('intro_source',e.target.value)} placeholder="Who introduced you?"/></div>
+        <div style={S.formGroup}><label style={S.formLabel}>Next Action Date</label><input style={S.formInput} type="date" value={form.next_action_date||''} onChange={e=>set('next_action_date',e.target.value)}/></div>
+        <div style={S.formGroup}><label style={S.formLabel}>Next Action Type</label><SelectInput value={form.next_action_type} onChange={v=>set('next_action_type',v)} options={ACTION_TYPES}/></div>
+        <div style={S.formGroup}><label style={S.formLabel}>Owner</label><SelectInput value={form.owner_id} onChange={v=>set('owner_id',v)} options={data.users.map(u=>({value:u.id,label:u.full_name}))}/></div>
+        <div style={{...S.formGroup,gridColumn:'1/-1'}}><label style={S.formLabel}>Notes</label><textarea style={{...S.formInput,minHeight:80}} value={form.notes} onChange={e=>set('notes',e.target.value)} placeholder="Deal notes..."/></div>
       </div>
     </Modal>
   );
 };
 
-const KanbanView = ({ deals, searchQuery, onEditDeal }) => {
-  const [draggedDeal, setDraggedDeal] = useState(null);
-  const { updateFundingDeal } = useApp();
+const FundingPage=()=>{
+  const{data,updateFundingDeal,deleteFundingDeal,showToast}=useApp();
+  const deals=data.funding_deals||[];
+  const[view,setView]=useState('kanban');
+  const[search,setSearch]=useState('');
+  const[modal,setModal]=useState(null); // null or deal object or {} for new
+  const[deleteTarget,setDeleteTarget]=useState(null);
+  const[dragId,setDragId]=useState(null);
 
-  const filteredDeals = useMemo(() => {
-    return deals.filter(d => {
-      const query = searchQuery.toLowerCase();
-      return d.investor_name.toLowerCase().includes(query) ||
-             (d.fund_name || '').toLowerCase().includes(query);
-    });
-  }, [deals, searchQuery]);
+  const filtered=useMemo(()=>{
+    const q=search.toLowerCase();
+    return deals.filter(d=>(d.investor_name||'').toLowerCase().includes(q)||(d.fund_name||'').toLowerCase().includes(q));
+  },[deals,search]);
 
-  const dealsByStage = useMemo(() => {
-    const map = {};
-    FUNDING_STAGES.forEach(s => { map[s.id] = []; });
-    filteredDeals.forEach(d => {
-      if (map[d.stage]) map[d.stage].push(d);
-    });
-    return map;
-  }, [filteredDeals]);
+  const stats=useMemo(()=>{
+    const active=deals.filter(d=>d.stage!=='closed');
+    const hot=deals.filter(d=>['dd','term_sheet'].includes(d.stage));
+    const closed=deals.filter(d=>d.stage==='closed');
+    return{total:deals.length,raising:active.reduce((s,d)=>s+(parseFloat(d.amount_target)||0),0),hot:hot.length,closed:closed.length};
+  },[deals]);
 
-  const handleDragStart = (e, deal) => {
-    setDraggedDeal(deal);
-    e.dataTransfer.effectAllowed = 'move';
-  };
+  const byStage=useMemo(()=>{
+    const m={};FUNDING_STAGES.forEach(s=>{m[s.id]=[]});
+    filtered.forEach(d=>{if(m[d.stage])m[d.stage].push(d)});
+    return m;
+  },[filtered]);
 
-  const handleDragOver = (e) => {
-    e.preventDefault();
-    e.dataTransfer.dropEffect = 'move';
-  };
-
-  const handleDrop = (e, stageId) => {
-    e.preventDefault();
-    if (draggedDeal && draggedDeal.stage !== stageId) {
-      updateFundingDeal(draggedDeal.id, { stage: stageId });
-    }
-    setDraggedDeal(null);
-  };
-
-  const handleDragEnd = () => {
-    setDraggedDeal(null);
-  };
-
-  return (
-    <div style={{display: 'grid', gridTemplateColumns: `repeat(${FUNDING_STAGES.length}, 1fr)`, gap: '16px', overflowX: 'auto', paddingBottom: '20px'}}>
-      {FUNDING_STAGES.map(stage => (
-        <div key={stage.id}>
-          <div style={{
-            background: stage.color,
-            color: '#fff',
-            padding: '8px 12px',
-            borderRadius: '6px',
-            fontSize: '13px',
-            fontWeight: '600',
-            marginBottom: '12px'
-          }}>
-            {stage.name} ({dealsByStage[stage.id].length})
-          </div>
-
-          <div
-            style={{
-              minHeight: '400px',
-              background: '#18181b',
-              border: '1px solid #27272a',
-              borderRadius: '8px',
-              padding: '12px',
-              gap: '12px',
-              display: 'flex',
-              flexDirection: 'column'
-            }}
-            onDragOver={handleDragOver}
-            onDrop={(e) => handleDrop(e, stage.id)}
-          >
-            {dealsByStage[stage.id].map(deal => (
-              <div
-                key={deal.id}
-                draggable
-                onDragStart={(e) => handleDragStart(e, deal)}
-                onDragEnd={handleDragEnd}
-                onClick={() => onEditDeal(deal)}
-                style={{
-                  background: '#27272a',
-                  border: `2px solid ${stage.color}`,
-                  borderRadius: '6px',
-                  padding: '12px',
-                  cursor: 'grab',
-                  opacity: draggedDeal?.id === deal.id ? 0.6 : 1,
-                  transition: 'all 0.2s',
-                  userSelect: 'none'
-                }}
-              >
-                <div style={{fontSize: '13px', fontWeight: '600', color: '#fafafa', marginBottom: '4px'}}>
-                  {deal.investor_name}
-                </div>
-                {deal.fund_name && (
-                  <div style={{fontSize: '12px', color: '#a1a1aa', marginBottom: '8px'}}>
-                    {deal.fund_name}
-                  </div>
-                )}
-                <div style={{fontSize: '12px', color: '#f97316', fontWeight: '600'}}>
-                  {deal.amount_target ? fmtCurrency(deal.amount_target) : 'TBD'}
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      ))}
-    </div>
-  );
-};
-
-const ListView = ({ deals, searchQuery, onEditDeal }) => {
-  const { data } = useApp();
-  const [sortCol, setSortCol] = useState('investor_name');
-  const [sortAsc, setSortAsc] = useState(true);
-
-  const filteredDeals = useMemo(() => {
-    let filtered = deals.filter(d => {
-      const query = searchQuery.toLowerCase();
-      return d.investor_name.toLowerCase().includes(query) ||
-             (d.fund_name || '').toLowerCase().includes(query);
-    });
-
-    return filtered.sort((a, b) => {
-      let aVal = a[sortCol];
-      let bVal = b[sortCol];
-      if (sortCol === 'owner_id') {
-        aVal = data.users.find(u => u.id === a.owner_id)?.name || '';
-        bVal = data.users.find(u => u.id === b.owner_id)?.name || '';
-      } else if (sortCol === 'stage') {
-        aVal = FUNDING_STAGE_MAP[a.stage]?.name || '';
-        bVal = FUNDING_STAGE_MAP[b.stage]?.name || '';
-      }
-      const cmp = aVal < bVal ? -1 : aVal > bVal ? 1 : 0;
-      return sortAsc ? cmp : -cmp;
-    });
-  }, [deals, searchQuery, sortCol, sortAsc, data]);
-
-  const handleSort = (col) => {
-    if (sortCol === col) {
-      setSortAsc(!sortAsc);
-    } else {
-      setSortCol(col);
-      setSortAsc(true);
-    }
-  };
-
-  const SortHeader = ({ label, col }) => (
-    <th
-      style={{...S.th, cursor: 'pointer', userSelect: 'none'}}
-      onClick={() => handleSort(col)}
-    >
-      {label} {sortCol === col && (sortAsc ? '↑' : '↓')}
-    </th>
-  );
-
-  return (
-    <div style={{overflowX: 'auto'}}>
-      <table style={S.table}>
-        <thead>
-          <tr>
-            <SortHeader label="Investor" col="investor_name" />
-            <SortHeader label="Fund" col="fund_name" />
-            <SortHeader label="Round" col="round_type" />
-            <SortHeader label="Amount Target" col="amount_target" />
-            <SortHeader label="Valuation" col="valuation_offered" />
-            <SortHeader label="Stage" col="stage" />
-            <SortHeader label="Next Action" col="next_action_date" />
-            <SortHeader label="Owner" col="owner_id" />
-          </tr>
-        </thead>
-        <tbody>
-          {filteredDeals.map(deal => (
-            <tr
-              key={deal.id}
-              onClick={() => onEditDeal(deal)}
-              style={{
-                cursor: 'pointer',
-                transition: 'background 0.2s',
-                ':hover': {background: '#27272a'}
-              }}
-              onMouseEnter={(e) => e.currentTarget.style.background = '#27272a'}
-              onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
-            >
-              <td style={S.td}>{deal.investor_name}</td>
-              <td style={S.td}>{deal.fund_name || '–'}</td>
-              <td style={S.td}>{deal.round_type}</td>
-              <td style={S.td}>{deal.amount_target ? fmtCurrency(deal.amount_target) : '–'}</td>
-              <td style={S.td}>{deal.valuation_offered ? fmtCurrency(deal.valuation_offered) : '–'}</td>
-              <td style={S.td}>
-                <StageBadge stage={FUNDING_STAGE_MAP[deal.stage]} />
-              </td>
-              <td style={S.td}>
-                {deal.next_action_date ? fmtDate(deal.next_action_date) : '–'}
-              </td>
-              <td style={S.td}>
-                {data.users.find(u => u.id === deal.owner_id)?.name || '–'}
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-      {filteredDeals.length === 0 && (
-        <div style={{padding: '40px', textAlign: 'center', color: '#a1a1aa'}}>
-          No funding deals found
-        </div>
-      )}
-    </div>
-  );
-};
-
-const FundingPage = () => {
-  const { data } = useApp();
-  const [view, setView] = useState('kanban'); // 'kanban' | 'list'
-  const [showModal, setShowModal] = useState(false);
-  const [editingDeal, setEditingDeal] = useState(null);
-  const [searchQuery, setSearchQuery] = useState('');
-
-  const deals = data.funding_deals || [];
-
-  const stats = useMemo(() => {
-    const total = deals.length;
-    const totalAmount = deals
-      .filter(d => d.stage !== 'closed')
-      .reduce((sum, d) => sum + (d.amount_target || 0), 0);
-    const hotLeads = deals.filter(d => d.stage === 'dd' || d.stage === 'term_sheet').length;
-    const closed = deals.filter(d => d.stage === 'closed').length;
-    return { total, totalAmount, hotLeads, closed };
-  }, [deals]);
-
-  const handleAddDeal = () => {
-    setEditingDeal(null);
-    setShowModal(true);
-  };
-
-  const handleEditDeal = (deal) => {
-    setEditingDeal(deal);
-    setShowModal(true);
-  };
-
-  const handleCloseModal = () => {
-    setShowModal(false);
-    setEditingDeal(null);
-  };
-
-  return (
-    <div style={{padding: '24px'}}>
-      <div style={{display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '28px'}}>
-        <div>
-          <h1 style={{fontSize: '28px', fontWeight: '700', color: '#fafafa', margin: 0, marginBottom: '8px'}}>
-            Funding Pipeline
-          </h1>
-          <p style={{color: '#a1a1aa', margin: 0, fontSize: '13px'}}>
-            Manage investor relationships and track funding rounds
-          </p>
-        </div>
-        <button style={S.btnPrimary} onClick={handleAddDeal}>
-          <I name="plus" size={16} color="#000" style={{marginRight: '8px'}} />
-          Add Deal
-        </button>
-      </div>
-
-      {/* Stats Row */}
-      <div style={{display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '16px', marginBottom: '28px'}}>
-        <div style={S.statCard}>
-          <div style={S.statVal}>{stats.total}</div>
-          <div style={S.statLabel}>Total Deals</div>
-        </div>
-        <div style={S.statCard}>
-          <div style={S.statVal}>{fmtCurrency(stats.totalAmount)}</div>
-          <div style={S.statLabel}>Amount Being Raised</div>
-        </div>
-        <div style={S.statCard}>
-          <div style={S.statVal}>{stats.hotLeads}</div>
-          <div style={S.statLabel}>Hot Leads (DD/Term Sheet)</div>
-        </div>
-        <div style={S.statCard}>
-          <div style={S.statVal}>{stats.closed}</div>
-          <div style={S.statLabel}>Closed Deals</div>
-        </div>
+  return(
+    <div>
+      {/* Stats */}
+      <div style={S.grid4}>
+        <div style={S.statCard}><div style={{...S.statVal,color:'#8b5cf6'}}>{stats.total}</div><div style={S.statLabel}>Total Deals</div></div>
+        <div style={S.statCard}><div style={{...S.statVal,color:'#f97316'}}>{fmtCurrency(stats.raising)}</div><div style={S.statLabel}>Being Raised</div></div>
+        <div style={S.statCard}><div style={{...S.statVal,color:'#f59e0b'}}>{stats.hot}</div><div style={S.statLabel}>DD / Term Sheet</div></div>
+        <div style={S.statCard}><div style={{...S.statVal,color:'#10b981'}}>{stats.closed}</div><div style={S.statLabel}>Closed</div></div>
       </div>
 
       {/* Controls */}
-      <div style={{display: 'flex', gap: '16px', marginBottom: '24px', alignItems: 'center', flexWrap: 'wrap'}}>
-        <SearchBar
-          placeholder="Search by investor or fund name..."
-          value={searchQuery}
-          onChange={setSearchQuery}
-          style={{flex: 1, minWidth: '200px'}}
-        />
-        <div style={{display: 'flex', gap: '8px', background: '#18181b', border: '1px solid #27272a', borderRadius: '6px', padding: '4px'}}>
-          <button
-            style={{
-              ...S.btn,
-              background: view === 'kanban' ? '#f97316' : 'transparent',
-              color: view === 'kanban' ? '#000' : '#a1a1aa',
-              padding: '8px 16px',
-              borderRadius: '4px',
-              fontSize: '13px'
-            }}
-            onClick={() => setView('kanban')}
-          >
-            <I name="grid" size={16} style={{marginRight: '6px'}} color={view === 'kanban' ? '#000' : '#a1a1aa'} />
-            Kanban
-          </button>
-          <button
-            style={{
-              ...S.btn,
-              background: view === 'list' ? '#f97316' : 'transparent',
-              color: view === 'list' ? '#000' : '#a1a1aa',
-              padding: '8px 16px',
-              borderRadius: '4px',
-              fontSize: '13px'
-            }}
-            onClick={() => setView('list')}
-          >
-            <I name="list" size={16} style={{marginRight: '6px'}} color={view === 'list' ? '#000' : '#a1a1aa'} />
-            List
-          </button>
+      <div style={{display:'flex',gap:12,marginBottom:20,alignItems:'center',flexWrap:'wrap'}}>
+        <SearchBar value={search} onChange={setSearch} placeholder="Search investors..."/>
+        <div style={{display:'flex',gap:2,background:'#27272a',borderRadius:8,padding:2}}>
+          {[{v:'kanban',l:'Board',i:'grid'},{v:'list',l:'List',i:'list'}].map(t=>(
+            <button key={t.v} style={{...S.btn,background:view===t.v?'#3f3f46':'transparent',color:view===t.v?'#fafafa':'#71717a',border:'none',padding:'6px 14px',fontSize:12,borderRadius:6}} onClick={()=>setView(t.v)}><I name={t.i} size={14}/> {t.l}</button>
+          ))}
         </div>
+        <button style={{...S.btn,...S.btnPrimary,marginLeft:'auto'}} onClick={()=>setModal({})}><I name="plus" size={16}/> Add Deal</button>
       </div>
 
-      {/* View Content */}
-      {deals.length === 0 ? (
-        <EmptyState
-          icon="briefcase"
-          title="No funding deals yet"
-          description="Start tracking investor relationships and funding rounds."
-          action={{label: 'Add Your First Deal', onClick: handleAddDeal}}
-        />
-      ) : view === 'kanban' ? (
-        <KanbanView deals={deals} searchQuery={searchQuery} onEditDeal={handleEditDeal} />
-      ) : (
-        <ListView deals={deals} searchQuery={searchQuery} onEditDeal={handleEditDeal} />
+      {/* Kanban */}
+      {view==='kanban'&&(
+        <div style={{display:'grid',gridTemplateColumns:`repeat(${FUNDING_STAGES.length},minmax(160px,1fr))`,gap:12,overflowX:'auto',paddingBottom:8}}>
+          {FUNDING_STAGES.map(stage=>(
+            <div key={stage.id}>
+              <div style={{background:stage.color,color:'#fff',padding:'8px 12px',borderRadius:6,fontSize:13,fontWeight:600,marginBottom:10}}>{stage.name} ({byStage[stage.id].length})</div>
+              <div style={{minHeight:300,background:'#18181b',border:'1px solid #27272a',borderRadius:8,padding:10,display:'flex',flexDirection:'column',gap:10}}
+                onDragOver={e=>{e.preventDefault();e.currentTarget.style.borderColor=stage.color}}
+                onDragLeave={e=>{e.currentTarget.style.borderColor='#27272a'}}
+                onDrop={e=>{e.preventDefault();e.currentTarget.style.borderColor='#27272a';if(dragId){const d=deals.find(x=>x.id===dragId);if(d&&d.stage!==stage.id)updateFundingDeal(dragId,{stage:stage.id});setDragId(null)}}}>
+                {byStage[stage.id].map(d=>(
+                  <div key={d.id} draggable onDragStart={()=>setDragId(d.id)} onDragEnd={()=>setDragId(null)} onClick={()=>setModal(d)}
+                    style={{background:'#27272a',border:'1px solid #3f3f46',borderRadius:6,padding:12,cursor:'grab',opacity:dragId===d.id?0.5:1}}>
+                    <div style={{fontSize:13,fontWeight:600,marginBottom:2}}>{d.investor_name}</div>
+                    {d.fund_name&&<div style={{fontSize:11,color:'#71717a',marginBottom:6}}>{d.fund_name}</div>}
+                    <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+                      <span style={{fontSize:12,fontWeight:600,color:'#f97316'}}>{d.amount_target?fmtCurrency(d.amount_target):'TBD'}</span>
+                      {d.round_type&&<span style={{...S.badge,fontSize:10}}>{d.round_type}</span>}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
       )}
 
+      {/* List */}
+      {view==='list'&&(
+        <div style={S.card}>
+          <table style={S.table}>
+            <thead><tr>
+              <th style={S.th}>Investor</th><th style={S.th}>Fund</th><th style={S.th}>Round</th><th style={S.th}>Amount</th><th style={S.th}>Stage</th><th style={S.th}>Next Action</th><th style={S.th}>Owner</th><th style={S.th}></th>
+            </tr></thead>
+            <tbody>
+              {filtered.map(d=>(
+                <tr key={d.id} style={{cursor:'pointer'}} onClick={()=>setModal(d)}>
+                  <td style={S.td}><span style={{fontWeight:500}}>{d.investor_name}</span></td>
+                  <td style={{...S.td,color:'#a1a1aa',fontSize:13}}>{d.fund_name||'—'}</td>
+                  <td style={S.td}>{d.round_type&&<span style={S.badge}>{d.round_type}</span>}</td>
+                  <td style={{...S.td,fontWeight:600,color:'#f97316'}}>{d.amount_target?fmtCurrency(d.amount_target):'—'}</td>
+                  <td style={S.td}><FundingStageBadge stage={d.stage}/></td>
+                  <td style={{...S.td,fontSize:13,color:'#a1a1aa'}}>{d.next_action_date?`${d.next_action_type||''} ${fmtDate(d.next_action_date)}`:'—'}</td>
+                  <td style={S.td}>{data.users.find(u=>u.id===d.owner_id)?.full_name||'—'}</td>
+                  <td style={S.td}><button style={{...S.btn,...S.btnGhost,padding:4}} onClick={e=>{e.stopPropagation();setDeleteTarget(d)}}><I name="trash" size={14} color="#ef4444"/></button></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          {filtered.length===0&&<EmptyState icon="dollar" message="No funding deals yet"/>}
+        </div>
+      )}
+
+      {deals.length===0&&view==='kanban'&&<EmptyState icon="dollar" message="No funding deals yet" action={<button style={{...S.btn,...S.btnPrimary}} onClick={()=>setModal({})}>Add Your First Deal</button>}/>}
+
       {/* Modal */}
-      <FundingDealModal
-        deal={editingDeal}
-        isOpen={showModal}
-        onClose={handleCloseModal}
-      />
+      {modal!==null&&<FundingDealModal deal={modal.id?modal:null} onClose={()=>setModal(null)}/>}
+
+      {/* Delete confirm */}
+      {deleteTarget&&<ConfirmModal title="Delete Deal" message={`Delete ${deleteTarget.investor_name}? This cannot be undone.`} danger onConfirm={()=>{deleteFundingDeal(deleteTarget.id);setDeleteTarget(null)}} onCancel={()=>setDeleteTarget(null)}/>}
     </div>
   );
 };
 
 // ==================== PARTNERSHIPS PIPELINE ====================
+const PartnerStageBadge=({stage})=>{const s=PARTNER_STAGE_MAP[stage];if(!s)return null;return <span style={{...S.badge,background:s.color+'22',color:s.color}}>{s.name}</span>};
 
-const PARTNER_TYPES = ['Channel', 'Integration', 'Referral', 'Reseller', 'Technology', 'Distribution'];
-
-const PARTNER_STAGES = [
-  { id: 'identified', name: 'Identified', color: '#6b7280', desc: 'Potential partner spotted' },
-  { id: 'outreach', name: 'Outreach', color: '#8b5cf6', desc: 'Initial contact made' },
-  { id: 'evaluating', name: 'Evaluating', color: '#3b82f6', desc: 'Exploring partnership fit' },
-  { id: 'agreement', name: 'Agreement', color: '#f59e0b', desc: 'Terms being finalised' },
-  { id: 'live', name: 'Live', color: '#10b981', desc: 'Active partnership' },
-  { id: 'churned', name: 'Churned', color: '#dc2626', desc: 'Partnership ended' }
-];
-
-const PARTNER_STAGE_MAP = Object.fromEntries(PARTNER_STAGES.map(s => [s.id, s]));
-
-const NEXT_ACTION_TYPES = ['Call', 'Email', 'Meeting', 'Follow-up'];
-
-const PartnerStageBadge = ({ stage }) => {
-  const s = PARTNER_STAGE_MAP[stage];
-  if (!s) return null;
-  return <span style={{ ...S.badge, background: s.color + '22', color: s.color }}>{s.name}</span>;
-};
-
-const PartnershipModal = ({ isOpen, partnership, onClose, onSave }) => {
-  const { data } = useApp();
-  const [form, setForm] = useState({
-    partner_name: '',
-    partner_type: '',
-    contact_id: '',
-    website: '',
-    stage: 'identified',
-    channel_description: '',
-    next_action_date: '',
-    next_action_type: 'Email',
-    notes: '',
-    owner_id: ''
-  });
-
-  const [errors, setErrors] = useState({});
-
-  useEffect(() => {
-    if (partnership) {
-      setForm(partnership);
-      setErrors({});
-    } else {
-      setForm({
-        partner_name: '',
-        partner_type: '',
-        contact_id: '',
-        website: '',
-        stage: 'identified',
-        channel_description: '',
-        next_action_date: '',
-        next_action_type: 'Email',
-        notes: '',
-        owner_id: ''
-      });
-      setErrors({});
-    }
-  }, [partnership, isOpen]);
-
-  const handleChange = useCallback((field, value) => {
-    setForm(prev => ({ ...prev, [field]: value }));
-    if (errors[field]) {
-      setErrors(prev => ({ ...prev, [field]: '' }));
-    }
-  }, [errors]);
-
-  const validate = () => {
-    const newErrors = {};
-    if (!form.partner_name.trim()) newErrors.partner_name = 'Partner name required';
-    if (!form.partner_type) newErrors.partner_type = 'Partner type required';
-    if (!form.owner_id) newErrors.owner_id = 'Owner required';
-    setErrors(newErrors);
-    return Object.keys(newErrors).length === 0;
+const PartnershipModal=({partnership,onClose})=>{
+  const{data,addPartnership,updatePartnership,currentUser,showToast}=useApp();
+  const[form,setForm]=useState({partner_name:'',partner_type:'',contact_id:'',stage:'identified',website:'',channel_description:'',next_action_date:'',next_action_type:'Call',notes:'',owner_id:currentUser?.id,...(partnership||{})});
+  const set=(k,v)=>setForm(f=>({...f,[k]:v}));
+  const save=()=>{
+    if(!form.partner_name.trim()){showToast('Partner name required','error');return}
+    const payload={partner_name:form.partner_name,partner_type:form.partner_type||'',contact_id:form.contact_id||null,stage:form.stage,website:form.website||'',channel_description:form.channel_description||'',next_action_date:form.next_action_date||null,next_action_type:form.next_action_type||'',notes:form.notes||'',owner_id:form.owner_id||currentUser?.id};
+    if(partnership?.id){updatePartnership(partnership.id,payload)}else{addPartnership(payload)}
+    onClose();
   };
-
-  const handleSave = () => {
-    if (validate()) {
-      onSave(form);
-    }
-  };
-
-  return (
-    <Modal isOpen={isOpen} onClose={onClose} size="lg">
-      <div style={{ padding: '24px' }}>
-        <h2 style={{ ...S.cardTitle, marginBottom: '24px' }}>
-          {partnership ? 'Edit Partnership' : 'New Partnership'}
-        </h2>
-
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', marginBottom: '16px' }}>
-          <div style={S.formGroup}>
-            <label style={S.formLabel}>Partner Name *</label>
-            <input
-              type="text"
-              style={{ ...S.formInput, borderColor: errors.partner_name ? '#dc2626' : '' }}
-              value={form.partner_name}
-              onChange={(e) => handleChange('partner_name', e.target.value)}
-              placeholder="e.g., Acme Distribution"
-            />
-            {errors.partner_name && <div style={{ color: '#dc2626', fontSize: '12px', marginTop: '4px' }}>{errors.partner_name}</div>}
-          </div>
-
-          <div style={S.formGroup}>
-            <label style={S.formLabel}>Type *</label>
-            <SelectInput
-              value={form.partner_type}
-              onChange={(val) => handleChange('partner_type', val)}
-              options={PARTNER_TYPES}
-              error={!!errors.partner_type}
-            />
-            {errors.partner_type && <div style={{ color: '#dc2626', fontSize: '12px', marginTop: '4px' }}>{errors.partner_type}</div>}
-          </div>
-        </div>
-
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', marginBottom: '16px' }}>
-          <div style={S.formGroup}>
-            <label style={S.formLabel}>Contact</label>
-            <SelectInput
-              value={form.contact_id}
-              onChange={(val) => handleChange('contact_id', val)}
-              options={data.contacts.map(c => ({ value: c.id, label: c.full_name || c.email }))}
-            />
-          </div>
-
-          <div style={S.formGroup}>
-            <label style={S.formLabel}>Website</label>
-            <input
-              type="url"
-              style={S.formInput}
-              value={form.website}
-              onChange={(e) => handleChange('website', e.target.value)}
-              placeholder="https://example.com"
-            />
-          </div>
-        </div>
-
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', marginBottom: '16px' }}>
-          <div style={S.formGroup}>
-            <label style={S.formLabel}>Stage</label>
-            <SelectInput
-              value={form.stage}
-              onChange={(val) => handleChange('stage', val)}
-              options={PARTNER_STAGES.map(s => ({ value: s.id, label: s.name }))}
-            />
-          </div>
-
-          <div style={S.formGroup}>
-            <label style={S.formLabel}>Owner *</label>
-            <SelectInput
-              value={form.owner_id}
-              onChange={(val) => handleChange('owner_id', val)}
-              options={data.users.map(u => ({ value: u.id, label: u.full_name || u.email }))}
-              error={!!errors.owner_id}
-            />
-            {errors.owner_id && <div style={{ color: '#dc2626', fontSize: '12px', marginTop: '4px' }}>{errors.owner_id}</div>}
-          </div>
-        </div>
-
-        <div style={S.formGroup}>
-          <label style={S.formLabel}>Channel Description</label>
-          <textarea
-            style={{ ...S.formInput, minHeight: '80px', fontFamily: 'inherit' }}
-            value={form.channel_description}
-            onChange={(e) => handleChange('channel_description', e.target.value)}
-            placeholder="Describe the partnership, distribution model, and benefits..."
-          />
-        </div>
-
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', marginBottom: '16px' }}>
-          <div style={S.formGroup}>
-            <label style={S.formLabel}>Next Action Date</label>
-            <input
-              type="date"
-              style={S.formInput}
-              value={form.next_action_date}
-              onChange={(e) => handleChange('next_action_date', e.target.value)}
-            />
-          </div>
-
-          <div style={S.formGroup}>
-            <label style={S.formLabel}>Next Action Type</label>
-            <SelectInput
-              value={form.next_action_type}
-              onChange={(val) => handleChange('next_action_type', val)}
-              options={NEXT_ACTION_TYPES}
-            />
-          </div>
-        </div>
-
-        <div style={S.formGroup}>
-          <label style={S.formLabel}>Notes</label>
-          <textarea
-            style={{ ...S.formInput, minHeight: '80px', fontFamily: 'inherit' }}
-            value={form.notes}
-            onChange={(e) => handleChange('notes', e.target.value)}
-            placeholder="Any additional notes about this partnership..."
-          />
-        </div>
-
-        <div style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end', marginTop: '24px' }}>
-          <button style={S.btnSecondary} onClick={onClose}>Cancel</button>
-          <button style={S.btnPrimary} onClick={handleSave}>Save Partnership</button>
-        </div>
+  return(
+    <Modal title={partnership?'Edit Partnership':'New Partnership'} onClose={onClose} wide footer={<>
+      <button style={{...S.btn,...S.btnSecondary}} onClick={onClose}>Cancel</button>
+      <button style={{...S.btn,...S.btnPrimary}} onClick={save}>Save Partnership</button>
+    </>}>
+      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:16}}>
+        <div style={S.formGroup}><label style={S.formLabel}>Partner Name *</label><input style={S.formInput} value={form.partner_name} onChange={e=>set('partner_name',e.target.value)} placeholder="e.g. OpenTable"/></div>
+        <div style={S.formGroup}><label style={S.formLabel}>Type</label><SelectInput value={form.partner_type} onChange={v=>set('partner_type',v)} options={PARTNER_TYPES} placeholder="Select type..."/></div>
+        <div style={S.formGroup}><label style={S.formLabel}>Stage</label><SelectInput value={form.stage} onChange={v=>set('stage',v)} options={PARTNER_STAGES.map(s=>({value:s.id,label:s.name}))}/></div>
+        <div style={S.formGroup}><label style={S.formLabel}>Website</label><input style={S.formInput} value={form.website} onChange={e=>set('website',e.target.value)} placeholder="https://..."/></div>
+        <div style={S.formGroup}><label style={S.formLabel}>Contact</label><SelectInput value={form.contact_id} onChange={v=>set('contact_id',v)} options={data.contacts.map(c=>({value:c.id,label:c.full_name}))} placeholder="Select contact..."/></div>
+        <div style={S.formGroup}><label style={S.formLabel}>Owner</label><SelectInput value={form.owner_id} onChange={v=>set('owner_id',v)} options={data.users.map(u=>({value:u.id,label:u.full_name}))}/></div>
+        <div style={S.formGroup}><label style={S.formLabel}>Next Action Date</label><input style={S.formInput} type="date" value={form.next_action_date||''} onChange={e=>set('next_action_date',e.target.value)}/></div>
+        <div style={S.formGroup}><label style={S.formLabel}>Next Action Type</label><SelectInput value={form.next_action_type} onChange={v=>set('next_action_type',v)} options={ACTION_TYPES}/></div>
+        <div style={{...S.formGroup,gridColumn:'1/-1'}}><label style={S.formLabel}>Channel Description</label><textarea style={{...S.formInput,minHeight:60}} value={form.channel_description} onChange={e=>set('channel_description',e.target.value)} placeholder="Describe the partnership or channel..."/></div>
+        <div style={{...S.formGroup,gridColumn:'1/-1'}}><label style={S.formLabel}>Notes</label><textarea style={{...S.formInput,minHeight:60}} value={form.notes} onChange={e=>set('notes',e.target.value)} placeholder="Notes..."/></div>
       </div>
     </Modal>
   );
 };
 
-const KanbanView = ({ partnerships, onCardClick, onCardDrop }) => {
-  const handleDragOver = useCallback((e) => {
-    e.preventDefault();
-    e.dataTransfer.dropEffect = 'move';
-  }, []);
+const PartnershipsPage=()=>{
+  const{data,updatePartnership,deletePartnership,showToast}=useApp();
+  const partners=data.partnerships||[];
+  const[view,setView]=useState('kanban');
+  const[search,setSearch]=useState('');
+  const[modal,setModal]=useState(null);
+  const[deleteTarget,setDeleteTarget]=useState(null);
+  const[dragId,setDragId]=useState(null);
 
-  const handleDrop = useCallback((stageId, e) => {
-    e.preventDefault();
-    const partnerId = e.dataTransfer.getData('partnerId');
-    onCardDrop(partnerId, stageId);
-  }, [onCardDrop]);
+  const filtered=useMemo(()=>{
+    const q=search.toLowerCase();
+    return partners.filter(p=>(p.partner_name||'').toLowerCase().includes(q)||(p.partner_type||'').toLowerCase().includes(q)||(p.channel_description||'').toLowerCase().includes(q));
+  },[partners,search]);
 
-  return (
-    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '16px' }}>
-      {PARTNER_STAGES.map(stage => {
-        const stagePartnerships = partnerships.filter(p => p.stage === stage.id);
-        return (
-          <div key={stage.id} style={{
-            background: '#18181b',
-            border: '1px solid #27272a',
-            borderRadius: '8px',
-            padding: '16px',
-            minHeight: '400px'
-          }}>
-            <div style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: '8px',
-              marginBottom: '16px',
-              paddingBottom: '12px',
-              borderBottom: `2px solid ${stage.color}`
-            }}>
-              <div style={{ width: '12px', height: '12px', background: stage.color, borderRadius: '50%' }} />
-              <h3 style={{ margin: 0, color: '#fafafa', fontSize: '14px', fontWeight: '600' }}>{stage.name}</h3>
-              <span style={{ marginLeft: 'auto', background: '#27272a', color: '#a1a1aa', padding: '2px 8px', borderRadius: '4px', fontSize: '12px' }}>
-                {stagePartnerships.length}
-              </span>
-            </div>
+  const stats=useMemo(()=>{
+    const live=partners.filter(p=>p.stage==='live');
+    const pipe=partners.filter(p=>!['live','churned'].includes(p.stage));
+    return{total:partners.length,live:live.length,pipeline:pipe.length,churned:partners.filter(p=>p.stage==='churned').length};
+  },[partners]);
 
-            <div
-              onDragOver={handleDragOver}
-              onDrop={(e) => handleDrop(stage.id, e)}
-              style={{ minHeight: '350px' }}
-            >
-              {stagePartnerships.length === 0 ? (
-                <div style={{ color: '#71717a', fontSize: '12px', textAlign: 'center', paddingTop: '40px' }}>
-                  Drop here
-                </div>
-              ) : (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                  {stagePartnerships.map(p => (
-                    <div
-                      key={p.id}
-                      draggable
-                      onDragStart={(e) => e.dataTransfer.setData('partnerId', p.id)}
-                      onClick={() => onCardClick(p)}
-                      style={{
-                        background: '#27272a',
-                        border: '1px solid #3f3f46',
-                        borderRadius: '6px',
-                        padding: '12px',
-                        cursor: 'grab',
-                        transition: 'all 0.2s',
-                        ':hover': { borderColor: stage.color, boxShadow: `0 0 12px ${stage.color}22` }
-                      }}
-                      onMouseEnter={(e) => {
-                        e.currentTarget.style.borderColor = stage.color;
-                        e.currentTarget.style.boxShadow = `0 0 12px ${stage.color}22`;
-                      }}
-                      onMouseLeave={(e) => {
-                        e.currentTarget.style.borderColor = '#3f3f46';
-                        e.currentTarget.style.boxShadow = 'none';
-                      }}
-                    >
-                      <div style={{ fontWeight: '600', color: '#fafafa', fontSize: '14px', marginBottom: '4px' }}>
-                        {p.partner_name}
-                      </div>
-                      <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-                        <span style={{ ...S.badge, background: '#3f3f46', color: '#a1a1aa', fontSize: '11px', padding: '2px 6px' }}>
-                          {p.partner_type}
-                        </span>
-                      </div>
-                      {p.next_action_date && (
-                        <div style={{ fontSize: '11px', color: '#71717a', marginTop: '8px' }}>
-                          <I name="calendar" size={12} color="#71717a" style={{ marginRight: '4px' }} />
-                          {fmtDate(p.next_action_date)}
-                        </div>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          </div>
-        );
-      })}
-    </div>
-  );
-};
+  const byStage=useMemo(()=>{
+    const m={};PARTNER_STAGES.forEach(s=>{m[s.id]=[]});
+    filtered.forEach(p=>{if(m[p.stage])m[p.stage].push(p)});
+    return m;
+  },[filtered]);
 
-const ListView = ({ partnerships, onEditClick, onDeleteClick, sortBy, onSort }) => {
-  const sortedPartnerships = useMemo(() => {
-    const sorted = [...partnerships];
-    if (sortBy === 'name') sorted.sort((a, b) => a.partner_name.localeCompare(b.partner_name));
-    if (sortBy === 'type') sorted.sort((a, b) => a.partner_type.localeCompare(b.partner_type));
-    if (sortBy === 'stage') sorted.sort((a, b) => {
-      const stageA = PARTNER_STAGES.findIndex(s => s.id === a.stage);
-      const stageB = PARTNER_STAGES.findIndex(s => s.id === b.stage);
-      return stageA - stageB;
-    });
-    return sorted;
-  }, [partnerships, sortBy]);
-
-  const { data } = useApp();
-
-  const getSortArrow = (column) => {
-    if (sortBy !== column) return ' ↕';
-    return sortBy === column ? ' ↓' : ' ↑';
-  };
-
-  return (
-    <div style={{ overflowX: 'auto' }}>
-      <table style={S.table}>
-        <thead>
-          <tr>
-            <th style={S.th} onClick={() => onSort('name')} style={{ cursor: 'pointer', ...S.th }}>
-              Partner {getSortArrow('name')}
-            </th>
-            <th style={S.th} onClick={() => onSort('type')} style={{ cursor: 'pointer', ...S.th }}>
-              Type {getSortArrow('type')}
-            </th>
-            <th style={S.th} onClick={() => onSort('stage')} style={{ cursor: 'pointer', ...S.th }}>
-              Stage {getSortArrow('stage')}
-            </th>
-            <th style={S.th}>Channel</th>
-            <th style={S.th}>Next Action</th>
-            <th style={S.th}>Owner</th>
-            <th style={S.th}>Actions</th>
-          </tr>
-        </thead>
-        <tbody>
-          {sortedPartnerships.map(p => {
-            const contact = data.contacts.find(c => c.id === p.contact_id);
-            const owner = data.users.find(u => u.id === p.owner_id);
-            return (
-              <tr key={p.id}>
-                <td style={S.td}>
-                  <div style={{ fontWeight: '500', color: '#fafafa' }}>{p.partner_name}</div>
-                  {p.website && (
-                    <div style={{ fontSize: '11px', color: '#71717a', marginTop: '4px' }}>
-                      <I name="link" size={10} color="#71717a" style={{ marginRight: '2px' }} />
-                      {p.website}
-                    </div>
-                  )}
-                </td>
-                <td style={S.td}>
-                  <span style={{ ...S.badge, background: '#3f3f46', color: '#a1a1aa', fontSize: '11px' }}>
-                    {p.partner_type}
-                  </span>
-                </td>
-                <td style={S.td}>
-                  <PartnerStageBadge stage={p.stage} />
-                </td>
-                <td style={S.td}>
-                  <div style={{ fontSize: '12px', color: '#a1a1aa', maxWidth: '150px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                    {p.channel_description || '—'}
-                  </div>
-                </td>
-                <td style={S.td}>
-                  {p.next_action_date ? (
-                    <div style={{ fontSize: '12px', color: '#a1a1aa' }}>
-                      <div>{fmtDate(p.next_action_date)}</div>
-                      <div style={{ fontSize: '10px', color: '#71717a' }}>{p.next_action_type}</div>
-                    </div>
-                  ) : (
-                    <div style={{ fontSize: '12px', color: '#71717a' }}>—</div>
-                  )}
-                </td>
-                <td style={S.td}>
-                  {owner ? <Avatar name={owner.full_name || owner.email} size={28} /> : <div style={{ fontSize: '12px', color: '#71717a' }}>—</div>}
-                </td>
-                <td style={S.td}>
-                  <div style={{ display: 'flex', gap: '8px' }}>
-                    <button
-                      style={S.btnGhost}
-                      onClick={() => onEditClick(p)}
-                      title="Edit"
-                    >
-                      <I name="edit" size={16} color="#f97316" />
-                    </button>
-                    <button
-                      style={S.btnGhost}
-                      onClick={() => onDeleteClick(p)}
-                      title="Delete"
-                    >
-                      <I name="trash" size={16} color="#dc2626" />
-                    </button>
-                  </div>
-                </td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
-    </div>
-  );
-};
-
-const PartnershipsPage = () => {
-  const { data, addPartnership, updatePartnership, deletePartnership, addActivity, showToast } = useApp();
-  const [view, setView] = useState('kanban');
-  const [searchTerm, setSearchTerm] = useState('');
-  const [sortBy, setSortBy] = useState('stage');
-  const [isModalOpen, setIsModalOpen] = useState(false);
-  const [editingPartnership, setEditingPartnership] = useState(null);
-  const [deleteConfirm, setDeleteConfirm] = useState(null);
-
-  const filteredPartnerships = useMemo(() => {
-    const query = searchTerm.toLowerCase();
-    return data.partnerships.filter(p =>
-      p.partner_name.toLowerCase().includes(query) ||
-      p.partner_type.toLowerCase().includes(query) ||
-      (p.channel_description && p.channel_description.toLowerCase().includes(query)) ||
-      (p.notes && p.notes.toLowerCase().includes(query))
-    );
-  }, [data.partnerships, searchTerm]);
-
-  const stats = useMemo(() => {
-    const total = filteredPartnerships.length;
-    const live = filteredPartnerships.filter(p => p.stage === 'live').length;
-    const inPipeline = filteredPartnerships.filter(p => p.stage !== 'live' && p.stage !== 'churned').length;
-    const churned = filteredPartnerships.filter(p => p.stage === 'churned').length;
-    return { total, live, inPipeline, churned };
-  }, [filteredPartnerships]);
-
-  const handleAddNew = useCallback(() => {
-    setEditingPartnership(null);
-    setIsModalOpen(true);
-  }, []);
-
-  const handleEditClick = useCallback((partnership) => {
-    setEditingPartnership(partnership);
-    setIsModalOpen(true);
-  }, []);
-
-  const handleModalClose = useCallback(() => {
-    setIsModalOpen(false);
-    setEditingPartnership(null);
-  }, []);
-
-  const handleSavePartnership = useCallback((form) => {
-    if (editingPartnership) {
-      updatePartnership(editingPartnership.id, form);
-      showToast({ type: 'success', message: 'Partnership updated' });
-      addActivity({
-        type: 'partnership_update',
-        description: `Updated partnership: ${form.partner_name}`,
-        entity_type: 'partnership',
-        entity_id: editingPartnership.id
-      });
-    } else {
-      addPartnership(form);
-      showToast({ type: 'success', message: 'Partnership added' });
-      addActivity({
-        type: 'partnership_create',
-        description: `Created partnership: ${form.partner_name}`,
-        entity_type: 'partnership'
-      });
-    }
-    handleModalClose();
-  }, [editingPartnership, updatePartnership, addPartnership, showToast, addActivity, handleModalClose]);
-
-  const handleDeleteClick = useCallback((partnership) => {
-    setDeleteConfirm(partnership);
-  }, []);
-
-  const handleConfirmDelete = useCallback(() => {
-    if (deleteConfirm) {
-      deletePartnership(deleteConfirm.id);
-      showToast({ type: 'success', message: 'Partnership deleted' });
-      addActivity({
-        type: 'partnership_delete',
-        description: `Deleted partnership: ${deleteConfirm.partner_name}`,
-        entity_type: 'partnership',
-        entity_id: deleteConfirm.id
-      });
-      setDeleteConfirm(null);
-    }
-  }, [deleteConfirm, deletePartnership, showToast, addActivity]);
-
-  const handleCardDrop = useCallback((partnerId, newStageId) => {
-    const partnership = data.partnerships.find(p => p.id === partnerId);
-    if (partnership && partnership.stage !== newStageId) {
-      updatePartnership(partnerId, { ...partnership, stage: newStageId });
-      const stageName = PARTNER_STAGE_MAP[newStageId]?.name || newStageId;
-      showToast({ type: 'success', message: `Moved to ${stageName}` });
-      addActivity({
-        type: 'partnership_stage_change',
-        description: `Moved ${partnership.partner_name} to ${stageName}`,
-        entity_type: 'partnership',
-        entity_id: partnerId
-      });
-    }
-  }, [data.partnerships, updatePartnership, showToast, addActivity]);
-
-  return (
-    <div style={{ padding: '24px' }}>
-      <div style={{ marginBottom: '24px' }}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px' }}>
-          <h1 style={{ ...S.cardTitle, margin: 0 }}>
-            <I name="building" size={24} color="#f97316" style={{ marginRight: '8px', verticalAlign: 'middle' }} />
-            Partnerships & Distribution
-          </h1>
-          <button style={S.btnPrimary} onClick={handleAddNew}>
-            <I name="plus" size={16} color="#fff" style={{ marginRight: '6px' }} />
-            Add Partnership
-          </button>
-        </div>
-
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '16px', marginBottom: '24px' }}>
-          <div style={S.statCard}>
-            <div style={S.statVal}>{stats.total}</div>
-            <div style={S.statLabel}>Total Partnerships</div>
-          </div>
-          <div style={S.statCard}>
-            <div style={{ ...S.statVal, color: '#10b981' }}>{stats.live}</div>
-            <div style={S.statLabel}>Live Partnerships</div>
-          </div>
-          <div style={S.statCard}>
-            <div style={{ ...S.statVal, color: '#3b82f6' }}>{stats.inPipeline}</div>
-            <div style={S.statLabel}>In Pipeline</div>
-          </div>
-          <div style={S.statCard}>
-            <div style={{ ...S.statVal, color: '#dc2626' }}>{stats.churned}</div>
-            <div style={S.statLabel}>Churned</div>
-          </div>
-        </div>
-
-        <div style={{ display: 'flex', gap: '12px', alignItems: 'center', marginBottom: '16px' }}>
-          <div style={{ flex: 1 }}>
-            <SearchBar
-              placeholder="Search partnerships..."
-              value={searchTerm}
-              onChange={setSearchTerm}
-            />
-          </div>
-          <div style={{ display: 'flex', gap: '8px', background: '#18181b', border: '1px solid #27272a', borderRadius: '6px', padding: '4px' }}>
-            <button
-              style={{
-                ...S.btnGhost,
-                background: view === 'kanban' ? '#27272a' : 'transparent',
-                color: view === 'kanban' ? '#f97316' : '#a1a1aa'
-              }}
-              onClick={() => setView('kanban')}
-              title="Kanban view"
-            >
-              <I name="grid" size={18} />
-            </button>
-            <button
-              style={{
-                ...S.btnGhost,
-                background: view === 'list' ? '#27272a' : 'transparent',
-                color: view === 'list' ? '#f97316' : '#a1a1aa'
-              }}
-              onClick={() => setView('list')}
-              title="List view"
-            >
-              <I name="list" size={18} />
-            </button>
-          </div>
-        </div>
+  return(
+    <div>
+      <div style={S.grid4}>
+        <div style={S.statCard}><div style={{...S.statVal,color:'#14b8a6'}}>{stats.total}</div><div style={S.statLabel}>Total Partners</div></div>
+        <div style={S.statCard}><div style={{...S.statVal,color:'#10b981'}}>{stats.live}</div><div style={S.statLabel}>Live</div></div>
+        <div style={S.statCard}><div style={{...S.statVal,color:'#3b82f6'}}>{stats.pipeline}</div><div style={S.statLabel}>In Pipeline</div></div>
+        <div style={S.statCard}><div style={{...S.statVal,color:'#dc2626'}}>{stats.churned}</div><div style={S.statLabel}>Churned</div></div>
       </div>
 
-      {filteredPartnerships.length === 0 ? (
-        <EmptyState
-          icon="building"
-          title="No Partnerships Found"
-          message={searchTerm ? 'Try adjusting your search' : 'Add your first partnership to get started'}
-          action={!searchTerm && {
-            label: 'Add Partnership',
-            onClick: handleAddNew
-          }}
-        />
-      ) : view === 'kanban' ? (
-        <KanbanView
-          partnerships={filteredPartnerships}
-          onCardClick={handleEditClick}
-          onCardDrop={handleCardDrop}
-        />
-      ) : (
-        <ListView
-          partnerships={filteredPartnerships}
-          onEditClick={handleEditClick}
-          onDeleteClick={handleDeleteClick}
-          sortBy={sortBy}
-          onSort={setSortBy}
-        />
+      <div style={{display:'flex',gap:12,marginBottom:20,alignItems:'center',flexWrap:'wrap'}}>
+        <SearchBar value={search} onChange={setSearch} placeholder="Search partners..."/>
+        <div style={{display:'flex',gap:2,background:'#27272a',borderRadius:8,padding:2}}>
+          {[{v:'kanban',l:'Board',i:'grid'},{v:'list',l:'List',i:'list'}].map(t=>(
+            <button key={t.v} style={{...S.btn,background:view===t.v?'#3f3f46':'transparent',color:view===t.v?'#fafafa':'#71717a',border:'none',padding:'6px 14px',fontSize:12,borderRadius:6}} onClick={()=>setView(t.v)}><I name={t.i} size={14}/> {t.l}</button>
+          ))}
+        </div>
+        <button style={{...S.btn,...S.btnPrimary,marginLeft:'auto'}} onClick={()=>setModal({})}><I name="plus" size={16}/> Add Partnership</button>
+      </div>
+
+      {view==='kanban'&&(
+        <div style={{display:'grid',gridTemplateColumns:`repeat(${PARTNER_STAGES.length},minmax(160px,1fr))`,gap:12,overflowX:'auto',paddingBottom:8}}>
+          {PARTNER_STAGES.map(stage=>(
+            <div key={stage.id}>
+              <div style={{background:stage.color,color:'#fff',padding:'8px 12px',borderRadius:6,fontSize:13,fontWeight:600,marginBottom:10}}>{stage.name} ({byStage[stage.id].length})</div>
+              <div style={{minHeight:300,background:'#18181b',border:'1px solid #27272a',borderRadius:8,padding:10,display:'flex',flexDirection:'column',gap:10}}
+                onDragOver={e=>{e.preventDefault();e.currentTarget.style.borderColor=stage.color}}
+                onDragLeave={e=>{e.currentTarget.style.borderColor='#27272a'}}
+                onDrop={e=>{e.preventDefault();e.currentTarget.style.borderColor='#27272a';if(dragId){const p=partners.find(x=>x.id===dragId);if(p&&p.stage!==stage.id)updatePartnership(dragId,{stage:stage.id});setDragId(null)}}}>
+                {byStage[stage.id].map(p=>(
+                  <div key={p.id} draggable onDragStart={()=>setDragId(p.id)} onDragEnd={()=>setDragId(null)} onClick={()=>setModal(p)}
+                    style={{background:'#27272a',border:'1px solid #3f3f46',borderRadius:6,padding:12,cursor:'grab',opacity:dragId===p.id?0.5:1}}>
+                    <div style={{fontSize:13,fontWeight:600,marginBottom:2}}>{p.partner_name}</div>
+                    <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+                      {p.partner_type&&<span style={{...S.badge,background:'rgba(20,184,166,0.15)',color:'#14b8a6',fontSize:10}}>{p.partner_type}</span>}
+                      {p.next_action_date&&<span style={{fontSize:10,color:'#71717a'}}>{fmtDate(p.next_action_date)}</span>}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
       )}
 
-      <PartnershipModal
-        isOpen={isModalOpen}
-        partnership={editingPartnership}
-        onClose={handleModalClose}
-        onSave={handleSavePartnership}
-      />
+      {view==='list'&&(
+        <div style={S.card}>
+          <table style={S.table}>
+            <thead><tr>
+              <th style={S.th}>Partner</th><th style={S.th}>Type</th><th style={S.th}>Stage</th><th style={S.th}>Channel</th><th style={S.th}>Next Action</th><th style={S.th}>Owner</th><th style={S.th}></th>
+            </tr></thead>
+            <tbody>
+              {filtered.map(p=>(
+                <tr key={p.id} style={{cursor:'pointer'}} onClick={()=>setModal(p)}>
+                  <td style={S.td}><span style={{fontWeight:500}}>{p.partner_name}</span></td>
+                  <td style={S.td}>{p.partner_type&&<span style={S.badge}>{p.partner_type}</span>}</td>
+                  <td style={S.td}><PartnerStageBadge stage={p.stage}/></td>
+                  <td style={{...S.td,fontSize:13,color:'#a1a1aa',maxWidth:200,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{p.channel_description||'—'}</td>
+                  <td style={{...S.td,fontSize:13,color:'#a1a1aa'}}>{p.next_action_date?`${p.next_action_type||''} ${fmtDate(p.next_action_date)}`:'—'}</td>
+                  <td style={S.td}>{data.users.find(u=>u.id===p.owner_id)?.full_name||'—'}</td>
+                  <td style={S.td}><button style={{...S.btn,...S.btnGhost,padding:4}} onClick={e=>{e.stopPropagation();setDeleteTarget(p)}}><I name="trash" size={14} color="#ef4444"/></button></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          {filtered.length===0&&<EmptyState icon="link" message="No partnerships yet"/>}
+        </div>
+      )}
 
-      <ConfirmModal
-        isOpen={!!deleteConfirm}
-        title="Delete Partnership?"
-        message={`Are you sure you want to delete "${deleteConfirm?.partner_name}"? This cannot be undone.`}
-        confirmText="Delete"
-        onConfirm={handleConfirmDelete}
-        onCancel={() => setDeleteConfirm(null)}
-        isDangerous
-      />
+      {partners.length===0&&view==='kanban'&&<EmptyState icon="link" message="No partnerships yet" action={<button style={{...S.btn,...S.btnPrimary}} onClick={()=>setModal({})}>Add Your First Partnership</button>}/>}
+
+      {modal!==null&&<PartnershipModal partnership={modal.id?modal:null} onClose={()=>setModal(null)}/>}
+      {deleteTarget&&<ConfirmModal title="Delete Partnership" message={`Delete ${deleteTarget.partner_name}? This cannot be undone.`} danger onConfirm={()=>{deletePartnership(deleteTarget.id);setDeleteTarget(null)}} onCancel={()=>setDeleteTarget(null)}/>}
     </div>
   );
 };
