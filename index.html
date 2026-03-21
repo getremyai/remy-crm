@@ -805,10 +805,8 @@ const LoginPage=()=>{
   return(
     <div style={S.loginContainer}>
       <div style={S.loginCard} className="fade-in">
-        <div style={{marginBottom:32}}>
-          <div style={{fontSize:48,fontWeight:800,color:'#f97316',letterSpacing:3,marginBottom:4}}>REMY</div>
-          <div style={{fontSize:12,color:'#71717a',letterSpacing:6,textTransform:'uppercase'}}>AI</div>
-          <div style={{fontSize:14,color:'#a1a1aa',marginTop:16}}>Team CRM v2</div>
+        <div style={{marginBottom:32,textAlign:'center'}}>
+          <img src="logo.svg" alt="Remy AI" style={{width:80,height:80}}/>
         </div>
 
         {/* Google SSO */}
@@ -3365,9 +3363,8 @@ const Sidebar=()=>{
 
   return(
     <div style={S.sidebar}>
-      <div style={S.logo}>
-        <div style={S.logoText}>REMY</div>
-        <div style={S.logoSub}>AI</div>
+      <div style={{...S.logo,display:'flex',alignItems:'center',justifyContent:'center'}}>
+        <img src="logo.svg" alt="Remy AI" style={{width:40,height:40}}/>
       </div>
       <nav style={S.nav}>
         {navItems.map(item=>(
@@ -3416,8 +3413,7 @@ const AppContent=()=>{
 const LoadingScreen=()=>(
   <div style={S.loginContainer}>
     <div style={{textAlign:'center'}} className="fade-in">
-      <div style={{fontSize:48,fontWeight:800,color:'#f97316',letterSpacing:3,marginBottom:4}}>REMY</div>
-      <div style={{fontSize:12,color:'#71717a',letterSpacing:6,textTransform:'uppercase',marginBottom:24}}>AI</div>
+      <img src="logo.svg" alt="Remy AI" style={{width:80,height:80,marginBottom:24}}/>
       <div style={{fontSize:14,color:'#52525b',animation:'pulse 1.5s infinite'}}>Loading...</div>
     </div>
   </div>
