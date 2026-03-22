@@ -3,7 +3,8 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Remy AI - Team CRM v2</title>
+    <title>Remy CRM</title>
+    <link rel="icon" type="image/svg+xml" href="logo.svg">
     <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
@@ -24,6 +25,51 @@
         @keyframes pulse{0%,100%{opacity:1}50%{opacity:0.5}}
         .fade-in{animation:fadeIn 0.2s ease-out;}
         .drag-over{outline:2px dashed #f97316!important;outline-offset:-2px;}
+        .hamburger-btn{display:none!important;}
+        .sidebar-overlay{display:none;}
+
+        /* ===== RESPONSIVE / MOBILE ===== */
+        @media(max-width:1024px){
+          .grid-5{grid-template-columns:repeat(3,1fr)!important;}
+          .grid-4{grid-template-columns:repeat(2,1fr)!important;}
+          .grid-3{grid-template-columns:repeat(2,1fr)!important;}
+          .grid-2{grid-template-columns:1fr!important;}
+          .kanban-scroll{overflow-x:auto;-webkit-overflow-scrolling:touch;}
+          .kanban-scroll>div{min-width:700px;}
+        }
+        @media(max-width:768px){
+          .hamburger-btn{display:inline-flex!important;}
+          .sidebar-desktop{transform:translateX(-100%);transition:transform 0.25s ease;}
+          .sidebar-desktop.open{transform:translateX(0);}
+          .sidebar-overlay{position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:49;transition:opacity 0.25s ease;}
+          .sidebar-overlay.visible{display:block;}
+          .main-content{margin-left:0!important;}
+          .grid-5,.grid-4,.grid-3{grid-template-columns:repeat(2,1fr)!important;}
+          .grid-2{grid-template-columns:1fr!important;}
+          .page-content{padding:16px!important;}
+          .page-header{padding:10px 16px!important;}
+          .page-title{font-size:17px!important;}
+          .modal-box{margin:12px;border-radius:10px;max-height:calc(100vh - 24px);}
+          .modal-body{padding:16px!important;}
+          .modal-head{padding:12px 16px!important;}
+          .modal-foot{padding:10px 16px!important;}
+          .form-grid{grid-template-columns:1fr!important;}
+          .table-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch;}
+          .table-wrap table{min-width:600px;}
+          .stat-val{font-size:24px!important;}
+          .stat-card{padding:14px!important;}
+          .card-head{padding:10px 14px!important;}
+          .search-box{width:100%;}
+          .header-actions{flex-wrap:wrap;gap:8px!important;}
+          .kanban-scroll{overflow-x:auto;-webkit-overflow-scrolling:touch;}
+          .kanban-scroll>div{min-width:500px;}
+        }
+        @media(max-width:480px){
+          .grid-5,.grid-4,.grid-3,.grid-2{grid-template-columns:1fr!important;}
+          .page-content{padding:12px!important;}
+          .stat-val{font-size:20px!important;}
+          .btn-text-hide{display:none;}
+        }
     </style>
 </head>
 <body>
@@ -174,6 +220,7 @@ settings:<svg {...p}><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 
 plus:<svg {...p}><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>,
 search:<svg {...p}><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>,
 x:<svg {...p}><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>,
+menu:<svg {...p}><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>,
 edit:<svg {...p}><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>,
 trash:<svg {...p}><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>,
 phone:<svg {...p}><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.127.96.361 1.903.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0 1 22 16.92z"/></svg>,
@@ -344,6 +391,7 @@ const AppProvider=({children})=>{
   const[loading,setLoading]=useState(true);
   const[authReady,setAuthReady]=useState(false);
   const[isOnline,setIsOnline]=useState(true); // Supabase connected
+  const[sidebarOpen,setSidebarOpen]=useState(false);
 
   // ---------- AUTH ----------
   useEffect(()=>{
@@ -671,7 +719,7 @@ const AppProvider=({children})=>{
     loginWithEmail(email);
   },[loginWithEmail]);
 
-  const value=useMemo(()=>({data,currentUser,page,setPage,toast,showToast,login,loginWithGoogle,loginWithEmail,logout,updateRestaurant,addRestaurant,deleteRestaurant,addContact,updateContact,deleteContact,linkContact,unlinkContact,addActivity,updateUser,removeUser,getUserName,resetData,setData,loading,isOnline,addFundingDeal,updateFundingDeal,deleteFundingDeal,addPartnership,updatePartnership,deletePartnership}),[data,currentUser,page,setPage,toast,showToast,login,loginWithGoogle,loginWithEmail,logout,updateRestaurant,addRestaurant,deleteRestaurant,addContact,updateContact,deleteContact,linkContact,unlinkContact,addActivity,updateUser,removeUser,getUserName,resetData,setData,loading,isOnline,addFundingDeal,updateFundingDeal,deleteFundingDeal,addPartnership,updatePartnership,deletePartnership]);
+  const value=useMemo(()=>({data,currentUser,page,setPage,toast,showToast,login,loginWithGoogle,loginWithEmail,logout,updateRestaurant,addRestaurant,deleteRestaurant,addContact,updateContact,deleteContact,linkContact,unlinkContact,addActivity,updateUser,removeUser,getUserName,resetData,setData,loading,isOnline,sidebarOpen,setSidebarOpen,addFundingDeal,updateFundingDeal,deleteFundingDeal,addPartnership,updatePartnership,deletePartnership}),[data,currentUser,page,setPage,toast,showToast,login,loginWithGoogle,loginWithEmail,logout,updateRestaurant,addRestaurant,deleteRestaurant,addContact,updateContact,deleteContact,linkContact,unlinkContact,addActivity,updateUser,removeUser,getUserName,resetData,setData,loading,isOnline,sidebarOpen,setSidebarOpen,addFundingDeal,updateFundingDeal,deleteFundingDeal,addPartnership,updatePartnership,deletePartnership]);
 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>;
 };
@@ -701,13 +749,13 @@ const Toast=({toast})=>{
 
 const Modal=({title,onClose,children,footer,wide})=>(
   <div style={S.modal} onClick={onClose}>
-    <div style={{...S.modalContent,...(wide?S.modalWide:{})}} className="fade-in" onClick={e=>e.stopPropagation()}>
-      <div style={S.modalHead}>
+    <div style={{...S.modalContent,...(wide?S.modalWide:{})}} className="fade-in modal-box" onClick={e=>e.stopPropagation()}>
+      <div className="modal-head" style={S.modalHead}>
         <span style={{fontSize:16,fontWeight:600}}>{title}</span>
         <button style={{...S.btn,...S.btnGhost}} onClick={onClose}><I name="x" size={18}/></button>
       </div>
-      <div style={S.modalBody}>{children}</div>
-      {footer&&<div style={S.modalFoot}>{footer}</div>}
+      <div className="modal-body" style={S.modalBody}>{children}</div>
+      {footer&&<div className="modal-foot" style={S.modalFoot}>{footer}</div>}
     </div>
   </div>
 );
@@ -942,7 +990,7 @@ const Dashboard=()=>{
     <div>
       {/* Quick Actions */}
       <div style={{...S.card,marginBottom:24}}>
-        <div style={S.cardHead}>
+        <div className="card-head" style={S.cardHead}>
           <span style={S.cardTitle}>Quick Actions</span>
           <button style={{...S.btn,...S.btnGhost,fontSize:12}} onClick={()=>setShowQuickStage(!showQuickStage)}>
             {showQuickStage?'Log activity':'Update stage'} <I name="chevRight" size={14}/>
@@ -1025,7 +1073,7 @@ const Dashboard=()=>{
       <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:24,marginBottom:24}}>
         {/* Next Actions */}
         <div style={S.card}>
-          <div style={S.cardHead}><span style={S.cardTitle}>Next Actions</span></div>
+          <div className="card-head" style={S.cardHead}><span style={S.cardTitle}>Next Actions</span></div>
           <div style={{padding:12,maxHeight:360,overflowY:'auto'}}>
             {nextActions.length===0?<div style={S.empty}>No upcoming actions</div>:nextActions.map(r=>(
               <div key={r.id} style={{display:'flex',alignItems:'center',gap:10,padding:'10px 8px',borderBottom:'1px solid #27272a',cursor:'pointer'}} onClick={()=>setPage('restaurants')}>
@@ -1046,7 +1094,7 @@ const Dashboard=()=>{
 
         {/* Pipeline Funnel */}
         <div style={S.card}>
-          <div style={S.cardHead}><span style={S.cardTitle}>Pipeline Funnel</span></div>
+          <div className="card-head" style={S.cardHead}><span style={S.cardTitle}>Pipeline Funnel</span></div>
           <div style={{padding:16}}>
             <div style={{display:'flex',flexDirection:'column',gap:10}}>
               {funnelData.map(f=>(
@@ -1064,7 +1112,7 @@ const Dashboard=()=>{
 
         {/* My Progress */}
         <div style={S.card}>
-          <div style={S.cardHead}><span style={S.cardTitle}>My Progress</span></div>
+          <div className="card-head" style={S.cardHead}><span style={S.cardTitle}>My Progress</span></div>
           <div style={{padding:16}}>
             {currentUser&&[
               {label:'Monthly Deals',val:myStats.deals,target:currentUser.monthly_target_deals,color:'#10b981'},
@@ -1090,7 +1138,7 @@ const Dashboard=()=>{
 
       {/* Recent Activity */}
       <div style={S.card}>
-        <div style={S.cardHead}>
+        <div className="card-head" style={S.cardHead}>
           <span style={S.cardTitle}>Recent Activity</span>
           <button style={{...S.btn,...S.btnGhost,fontSize:12}} onClick={()=>setPage('activities')}>View all <I name="chevRight" size={14}/></button>
         </div>
@@ -1159,7 +1207,7 @@ const Pipeline=()=>{
         </select>
       </div>
 
-      <div style={{display:'flex',gap:12,overflowX:'auto',paddingBottom:16}}>
+      <div className="kanban-scroll" style={{display:'flex',gap:12,overflowX:'auto',paddingBottom:16}}>
         {STAGES.map(stage=>{
           const stageRests=filtered.filter(r=>r.stage===stage.id);
           const stageValue=stageRests.reduce((s,r)=>s+(parseFloat(r.target_mrr)||0),0);
@@ -1261,7 +1309,7 @@ const RestaurantModal=({id,onClose,isNew})=>{
       {tab==='details'&&<>
         <div style={S.formSection}>
           <div style={S.formSectionTitle}>Restaurant Info</div>
-          <div style={S.formGrid}>
+          <div className="form-grid" style={S.formGrid}>
             <div style={S.formGroup}><label style={S.formLabel}>Name *</label><input style={S.formInput} value={form.name} onChange={e=>set('name',e.target.value)}/></div>
             <div style={S.formGroup}><label style={S.formLabel}>Group</label><input style={S.formInput} value={form.group_name} onChange={e=>set('group_name',e.target.value)} placeholder="e.g. Dishoom"/></div>
             <div style={S.formGroup}><label style={S.formLabel}>Website</label><input style={S.formInput} value={form.website} onChange={e=>set('website',e.target.value)}/></div>
@@ -1275,7 +1323,7 @@ const RestaurantModal=({id,onClose,isNew})=>{
 
         <div style={S.formSection}>
           <div style={S.formSectionTitle}>Pipeline</div>
-          <div style={S.formGrid}>
+          <div className="form-grid" style={S.formGrid}>
             <div style={S.formGroup}><label style={S.formLabel}>Stage</label>
               <select style={S.formInput} value={form.stage} onChange={e=>{
                 const ns=e.target.value;
@@ -1298,7 +1346,7 @@ const RestaurantModal=({id,onClose,isNew})=>{
 
         <div style={S.formSection}>
           <div style={S.formSectionTitle}>Actions & Trial</div>
-          <div style={S.formGrid}>
+          <div className="form-grid" style={S.formGrid}>
             <div style={S.formGroup}><label style={S.formLabel}>Next Action Date</label><input style={S.formInput} type="date" value={form.next_action_date} onChange={e=>set('next_action_date',e.target.value)}/></div>
             <div style={S.formGroup}><label style={S.formLabel}>Next Action Type</label><SelectInput value={form.next_action_type} onChange={v=>set('next_action_type',v)} options={ACTION_TYPES} placeholder="Select..."/></div>
             <div style={S.formGroup}><label style={S.formLabel}>Trial Start</label><input style={S.formInput} type="date" value={form.trial_start_date} onChange={e=>set('trial_start_date',e.target.value)}/></div>
@@ -1412,7 +1460,7 @@ const RestaurantsList=()=>{
       </div>
 
       <div style={S.card}>
-        <table style={S.table}>
+        <div className="table-wrap"><table style={S.table}>
           <thead><tr>
             <th style={S.th} onClick={()=>handleSort('name')}><span style={{cursor:'pointer'}}>Name<SortIcon col="name"/></span></th>
             <th style={S.th} onClick={()=>handleSort('group')}><span style={{cursor:'pointer'}}>Group<SortIcon col="group"/></span></th>
@@ -1443,7 +1491,7 @@ const RestaurantsList=()=>{
               })
             }
           </tbody>
-        </table>
+        </table></div>
       </div>
       {editId&&<RestaurantModal id={editId} onClose={()=>setEditId(null)}/>}
       {showAdd&&<RestaurantModal isNew onClose={()=>setShowAdd(false)}/>}
@@ -1504,7 +1552,7 @@ const ContactModal=({id,onClose,isNew})=>{
       {tab==='details'&&<>
         <div style={S.formSection}>
           <div style={S.formSectionTitle}>Contact Info</div>
-          <div style={S.formGrid}>
+          <div className="form-grid" style={S.formGrid}>
             <div style={S.formGroup}><label style={S.formLabel}>Full Name *</label><input style={S.formInput} value={form.full_name} onChange={e=>set('full_name',e.target.value)}/></div>
             <div style={S.formGroup}><label style={S.formLabel}>Email</label><input style={S.formInput} type="email" value={form.email} onChange={e=>set('email',e.target.value)}/></div>
             <div style={S.formGroup}><label style={S.formLabel}>Phone</label><input style={S.formInput} value={form.phone} onChange={e=>set('phone',e.target.value)}/></div>
@@ -1542,7 +1590,7 @@ const ContactModal=({id,onClose,isNew})=>{
 
           <div style={{...S.card,padding:16}}>
             <div style={{fontSize:13,fontWeight:600,color:'#a1a1aa',marginBottom:12}}>Link to Restaurant</div>
-            <div style={S.formGrid}>
+            <div className="form-grid" style={S.formGrid}>
               <div style={S.formGroup}><label style={S.formLabel}>Restaurant</label>
                 <select style={S.formInput} value={linkRest} onChange={e=>setLinkRest(e.target.value)}>
                   <option value="">Select...</option>
@@ -1600,7 +1648,7 @@ const ContactsPage=()=>{
         <button style={{...S.btn,...S.btnPrimary}} onClick={()=>setShowAdd(true)}><I name="plus" size={16}/> Add Contact</button>
       </div>
       <div style={S.card}>
-        <table style={S.table}>
+        <div className="table-wrap"><table style={S.table}>
           <thead><tr>
             <th style={S.th}>Name</th>
             <th style={S.th}>Company</th>
@@ -1626,7 +1674,7 @@ const ContactsPage=()=>{
               })
             }
           </tbody>
-        </table>
+        </table></div>
       </div>
       {editId&&<ContactModal id={editId} onClose={()=>setEditId(null)}/>}
       {showAdd&&<ContactModal isNew onClose={()=>setShowAdd(false)}/>}
@@ -2040,10 +2088,10 @@ const LinkedInPage=()=>{
         </div>
 
         {/* Stats bar */}
-        <div style={{...S.grid3,marginBottom:20}}>
-          <div style={S.statCard}><div style={{...S.statVal,color:'#f97316',fontSize:20}}>{allParsed.length}</div><div style={S.statLabel}>Total connections parsed</div></div>
-          <div style={S.statCard}><div style={{...S.statVal,color:'#10b981',fontSize:20}}>{approvedPipeline}</div><div style={S.statLabel}>Approved so far</div></div>
-          <div style={S.statCard}><div style={{...S.statVal,color:'#71717a',fontSize:20}}>{Object.values(decisions).filter(d=>d==='skip').length}</div><div style={S.statLabel}>Skipped</div></div>
+        <div className="grid-3" style={{...S.grid3,marginBottom:20}}>
+          <div className="stat-card" style={S.statCard}><div style={{...S.statVal,color:'#f97316',fontSize:20}}>{allParsed.length}</div><div style={S.statLabel}>Total connections parsed</div></div>
+          <div className="stat-card" style={S.statCard}><div style={{...S.statVal,color:'#10b981',fontSize:20}}>{approvedPipeline}</div><div style={S.statLabel}>Approved so far</div></div>
+          <div className="stat-card" style={S.statCard}><div style={{...S.statVal,color:'#71717a',fontSize:20}}>{Object.values(decisions).filter(d=>d==='skip').length}</div><div style={S.statLabel}>Skipped</div></div>
         </div>
 
         {pipelineMatches.length===0?(
@@ -2152,10 +2200,10 @@ const LinkedInPage=()=>{
           </div>
         </div>
 
-        <div style={{...S.grid3,marginBottom:20}}>
-          <div style={S.statCard}><div style={{...S.statVal,color:'#10b981',fontSize:20}}>{approvedHosp}</div><div style={S.statLabel}>Approved</div></div>
-          <div style={S.statCard}><div style={{...S.statVal,color:'#71717a',fontSize:20}}>{Object.values(hospDecisions).filter(d=>d==='skip').length}</div><div style={S.statLabel}>Skipped</div></div>
-          <div style={S.statCard}><div style={{...S.statVal,color:'#f97316',fontSize:20}}>{totalApproved}</div><div style={S.statLabel}>Total approved</div></div>
+        <div className="grid-3" style={{...S.grid3,marginBottom:20}}>
+          <div className="stat-card" style={S.statCard}><div style={{...S.statVal,color:'#10b981',fontSize:20}}>{approvedHosp}</div><div style={S.statLabel}>Approved</div></div>
+          <div className="stat-card" style={S.statCard}><div style={{...S.statVal,color:'#71717a',fontSize:20}}>{Object.values(hospDecisions).filter(d=>d==='skip').length}</div><div style={S.statLabel}>Skipped</div></div>
+          <div className="stat-card" style={S.statCard}><div style={{...S.statVal,color:'#f97316',fontSize:20}}>{totalApproved}</div><div style={S.statLabel}>Total approved</div></div>
         </div>
 
         {hospContacts.length===0?(
@@ -2253,10 +2301,10 @@ const LinkedInPage=()=>{
             <div style={{fontSize:11,color:'#71717a'}}>investor contacts found</div>
           </div>
         </div>
-        <div style={{...S.grid3,marginBottom:20}}>
-          <div style={S.statCard}><div style={{...S.statVal,color:'#10b981',fontSize:20}}>{approvedInv}</div><div style={S.statLabel}>Approved</div></div>
-          <div style={S.statCard}><div style={{...S.statVal,color:'#71717a',fontSize:20}}>{Object.values(invDecisions).filter(d=>d==='skip').length}</div><div style={S.statLabel}>Skipped</div></div>
-          <div style={S.statCard}><div style={{...S.statVal,color:'#f97316',fontSize:20}}>{totalApproved}</div><div style={S.statLabel}>Total approved</div></div>
+        <div className="grid-3" style={{...S.grid3,marginBottom:20}}>
+          <div className="stat-card" style={S.statCard}><div style={{...S.statVal,color:'#10b981',fontSize:20}}>{approvedInv}</div><div style={S.statLabel}>Approved</div></div>
+          <div className="stat-card" style={S.statCard}><div style={{...S.statVal,color:'#71717a',fontSize:20}}>{Object.values(invDecisions).filter(d=>d==='skip').length}</div><div style={S.statLabel}>Skipped</div></div>
+          <div className="stat-card" style={S.statCard}><div style={{...S.statVal,color:'#f97316',fontSize:20}}>{totalApproved}</div><div style={S.statLabel}>Total approved</div></div>
         </div>
         {investorContacts.length===0?(
           <div style={{...S.card,padding:32,textAlign:'center'}}>
@@ -2326,10 +2374,10 @@ const LinkedInPage=()=>{
             <div style={{fontSize:11,color:'#71717a'}}>partner contacts found</div>
           </div>
         </div>
-        <div style={{...S.grid3,marginBottom:20}}>
-          <div style={S.statCard}><div style={{...S.statVal,color:'#10b981',fontSize:20}}>{approvedPart}</div><div style={S.statLabel}>Approved</div></div>
-          <div style={S.statCard}><div style={{...S.statVal,color:'#71717a',fontSize:20}}>{Object.values(partDecisions).filter(d=>d==='skip').length}</div><div style={S.statLabel}>Skipped</div></div>
-          <div style={S.statCard}><div style={{...S.statVal,color:'#f97316',fontSize:20}}>{totalApproved}</div><div style={S.statLabel}>Total approved</div></div>
+        <div className="grid-3" style={{...S.grid3,marginBottom:20}}>
+          <div className="stat-card" style={S.statCard}><div style={{...S.statVal,color:'#10b981',fontSize:20}}>{approvedPart}</div><div style={S.statLabel}>Approved</div></div>
+          <div className="stat-card" style={S.statCard}><div style={{...S.statVal,color:'#71717a',fontSize:20}}>{Object.values(partDecisions).filter(d=>d==='skip').length}</div><div style={S.statLabel}>Skipped</div></div>
+          <div className="stat-card" style={S.statCard}><div style={{...S.statVal,color:'#f97316',fontSize:20}}>{totalApproved}</div><div style={S.statLabel}>Total approved</div></div>
         </div>
         {partnerContacts.length===0?(
           <div style={{...S.card,padding:32,textAlign:'center'}}>
@@ -2395,44 +2443,44 @@ const LinkedInPage=()=>{
         <h3 style={{fontSize:16,fontWeight:600,marginBottom:16}}>Import Summary</h3>
 
         <div style={{display:'grid',gridTemplateColumns:'repeat(5,1fr)',gap:12,marginBottom:24}}>
-          <div style={S.statCard}><div style={{...S.statVal,color:'#f97316',fontSize:24}}>{totalApproved}</div><div style={S.statLabel}>Total</div></div>
-          <div style={S.statCard}><div style={{...S.statVal,color:'#10b981',fontSize:24}}>{approvedP.length}</div><div style={S.statLabel}>Pipeline</div></div>
-          <div style={S.statCard}><div style={{...S.statVal,color:'#8b5cf6',fontSize:24}}>{approvedH.length}</div><div style={S.statLabel}>Hospitality</div></div>
-          <div style={S.statCard}><div style={{...S.statVal,color:'#a855f7',fontSize:24}}>{approvedI.length}</div><div style={S.statLabel}>Investors</div></div>
-          <div style={S.statCard}><div style={{...S.statVal,color:'#14b8a6',fontSize:24}}>{approvedPa.length}</div><div style={S.statLabel}>Partners</div></div>
+          <div className="stat-card" style={S.statCard}><div style={{...S.statVal,color:'#f97316',fontSize:24}}>{totalApproved}</div><div style={S.statLabel}>Total</div></div>
+          <div className="stat-card" style={S.statCard}><div style={{...S.statVal,color:'#10b981',fontSize:24}}>{approvedP.length}</div><div style={S.statLabel}>Pipeline</div></div>
+          <div className="stat-card" style={S.statCard}><div style={{...S.statVal,color:'#8b5cf6',fontSize:24}}>{approvedH.length}</div><div style={S.statLabel}>Hospitality</div></div>
+          <div className="stat-card" style={S.statCard}><div style={{...S.statVal,color:'#a855f7',fontSize:24}}>{approvedI.length}</div><div style={S.statLabel}>Investors</div></div>
+          <div className="stat-card" style={S.statCard}><div style={{...S.statVal,color:'#14b8a6',fontSize:24}}>{approvedPa.length}</div><div style={S.statLabel}>Partners</div></div>
         </div>
 
         {approvedP.length>0&&<div style={{...S.card,marginBottom:16}}>
-          <div style={S.cardHead}><span style={{...S.cardTitle,color:'#10b981'}}>Pipeline Matches to Import</span></div>
-          <table style={S.table}><thead><tr>
+          <div className="card-head" style={S.cardHead}><span style={{...S.cardTitle,color:'#10b981'}}>Pipeline Matches to Import</span></div>
+          <div className="table-wrap"><table style={S.table}><thead><tr>
             <th style={S.th}>Name</th><th style={S.th}>Company</th><th style={S.th}>Position</th><th style={S.th}>Linked Restaurant</th>
           </tr></thead><tbody>
             {approvedP.map((p,i)=>(
               <tr key={i}><td style={S.td}>{p.fullName}</td><td style={{...S.td,fontSize:13}}>{p.company}</td><td style={{...S.td,fontSize:13,color:'#a1a1aa'}}>{p.position}</td>
               <td style={S.td}><span style={{...S.badge,background:'rgba(16,185,129,0.15)',color:'#10b981'}}>{p.bestMatch.restaurant.name}</span></td></tr>
             ))}
-          </tbody></table>
+          </tbody></table></div>
         </div>}
 
         {approvedH.length>0&&<div style={{...S.card,marginBottom:16}}>
-          <div style={S.cardHead}><span style={{...S.cardTitle,color:'#8b5cf6'}}>Hospitality Contacts</span></div>
-          <table style={S.table}><thead><tr><th style={S.th}>Name</th><th style={S.th}>Company</th><th style={S.th}>Position</th></tr></thead><tbody>
+          <div className="card-head" style={S.cardHead}><span style={{...S.cardTitle,color:'#8b5cf6'}}>Hospitality Contacts</span></div>
+          <div className="table-wrap"><table style={S.table}><thead><tr><th style={S.th}>Name</th><th style={S.th}>Company</th><th style={S.th}>Position</th></tr></thead><tbody>
             {approvedH.map((p,i)=>(<tr key={i}><td style={S.td}>{p.fullName}</td><td style={{...S.td,fontSize:13}}>{p.company}</td><td style={{...S.td,fontSize:13,color:'#a1a1aa'}}>{p.position}</td></tr>))}
-          </tbody></table>
+          </tbody></table></div>
         </div>}
 
         {approvedI.length>0&&<div style={{...S.card,marginBottom:16}}>
-          <div style={S.cardHead}><span style={{...S.cardTitle,color:'#a855f7'}}>Investor Contacts</span></div>
-          <table style={S.table}><thead><tr><th style={S.th}>Name</th><th style={S.th}>Company</th><th style={S.th}>Position</th></tr></thead><tbody>
+          <div className="card-head" style={S.cardHead}><span style={{...S.cardTitle,color:'#a855f7'}}>Investor Contacts</span></div>
+          <div className="table-wrap"><table style={S.table}><thead><tr><th style={S.th}>Name</th><th style={S.th}>Company</th><th style={S.th}>Position</th></tr></thead><tbody>
             {approvedI.map((p,i)=>(<tr key={i}><td style={S.td}>{p.fullName}</td><td style={{...S.td,fontSize:13}}>{p.company}</td><td style={{...S.td,fontSize:13,color:'#a1a1aa'}}>{p.position}</td></tr>))}
-          </tbody></table>
+          </tbody></table></div>
         </div>}
 
         {approvedPa.length>0&&<div style={{...S.card,marginBottom:16}}>
-          <div style={S.cardHead}><span style={{...S.cardTitle,color:'#14b8a6'}}>Partner Contacts</span></div>
-          <table style={S.table}><thead><tr><th style={S.th}>Name</th><th style={S.th}>Company</th><th style={S.th}>Position</th></tr></thead><tbody>
+          <div className="card-head" style={S.cardHead}><span style={{...S.cardTitle,color:'#14b8a6'}}>Partner Contacts</span></div>
+          <div className="table-wrap"><table style={S.table}><thead><tr><th style={S.th}>Name</th><th style={S.th}>Company</th><th style={S.th}>Position</th></tr></thead><tbody>
             {approvedPa.map((p,i)=>(<tr key={i}><td style={S.td}>{p.fullName}</td><td style={{...S.td,fontSize:13}}>{p.company}</td><td style={{...S.td,fontSize:13,color:'#a1a1aa'}}>{p.position}</td></tr>))}
-          </tbody></table>
+          </tbody></table></div>
         </div>}
 
         <div style={{display:'flex',gap:12,justifyContent:'center',marginTop:24}}>
@@ -2525,7 +2573,7 @@ const TargetsPage=()=>{
 
           {editTargets&&(
             <div style={{...S.card,padding:20,marginBottom:24}}>
-              <div style={S.formGrid}>
+              <div className="form-grid" style={S.formGrid}>
                 {[{key:'monthly_target_deals',label:'Monthly Deals Target'},{key:'monthly_target_mrr',label:'Monthly MRR Target (£)'},{key:'weekly_target_conversations',label:'Weekly Conversations'},{key:'weekly_target_proposals',label:'Weekly Proposals'},{key:'monthly_target_trials',label:'Monthly Trials'}].map(t=>(
                   <div key={t.key} style={S.formGroup}>
                     <label style={S.formLabel}>{t.label}</label>
@@ -2537,10 +2585,10 @@ const TargetsPage=()=>{
             </div>
           )}
 
-          <div style={S.grid2}>
+          <div className="grid-2" style={S.grid2}>
             {/* Monthly targets */}
             <div style={S.card}>
-              <div style={S.cardHead}><span style={S.cardTitle}>Monthly Progress</span><span style={{fontSize:12,color:'#71717a'}}>{daysLeftInMonth()} days left</span></div>
+              <div className="card-head" style={S.cardHead}><span style={S.cardTitle}>Monthly Progress</span><span style={{fontSize:12,color:'#71717a'}}>{daysLeftInMonth()} days left</span></div>
               <div style={{padding:16}}>
                 {[
                   {label:'Deals Closed',val:myStats.deals,target:currentUser.monthly_target_deals,color:'#10b981',icon:'check'},
@@ -2563,7 +2611,7 @@ const TargetsPage=()=>{
 
             {/* Weekly targets */}
             <div style={S.card}>
-              <div style={S.cardHead}><span style={S.cardTitle}>Weekly Progress</span><span style={{fontSize:12,color:'#71717a'}}>{daysLeftInWeek()} days left</span></div>
+              <div className="card-head" style={S.cardHead}><span style={S.cardTitle}>Weekly Progress</span><span style={{fontSize:12,color:'#71717a'}}>{daysLeftInWeek()} days left</span></div>
               <div style={{padding:16}}>
                 {[
                   {label:'Conversations (Calls + Meetings)',val:myWeekStats.conversations,target:currentUser.weekly_target_conversations,color:'#8b5cf6'},
@@ -2595,7 +2643,7 @@ const TargetsPage=()=>{
           </div>
 
           <div style={S.card}>
-            <table style={S.table}>
+            <div className="table-wrap"><table style={S.table}>
               <thead><tr>
                 <th style={{...S.th,width:50}}>#</th>
                 <th style={S.th}>Team Member</th>
@@ -2624,7 +2672,7 @@ const TargetsPage=()=>{
                   );
                 })}
               </tbody>
-            </table>
+            </table></div>
           </div>
         </div>
       )}
@@ -2717,7 +2765,7 @@ const ActivitiesPage=()=>{
           <button style={{...S.btn,...S.btnSecondary}} onClick={()=>setShowAdd(false)}>Cancel</button>
           <button style={{...S.btn,...S.btnPrimary}} onClick={handleAddActivity}>Log Activity</button>
         </>}>
-          <div style={S.formGrid}>
+          <div className="form-grid" style={S.formGrid}>
             <div style={S.formGroup}><label style={S.formLabel}>Type</label>
               <SelectInput value={newAct.type} onChange={v=>setNewAct(a=>({...a,type:v}))} options={[{value:'call',label:'Call'},{value:'email',label:'Email'},{value:'meeting',label:'Meeting'},{value:'note',label:'Note'}]}/>
             </div>
@@ -2901,8 +2949,8 @@ ${rActs.length>0?'\nRecent Activity:\n'+rActs.map(a=>'  ['+fmtDate(a.occurred_at
 
       {tab==='users'&&(
         <div style={S.card}>
-          <div style={S.cardHead}><span style={S.cardTitle}>Team Members ({users.length})</span></div>
-          <table style={S.table}>
+          <div className="card-head" style={S.cardHead}><span style={S.cardTitle}>Team Members ({users.length})</span></div>
+          <div className="table-wrap"><table style={S.table}>
             <thead><tr><th style={S.th}>User</th><th style={S.th}>Email</th><th style={S.th}>Role</th><th style={S.th}>Joined</th><th style={S.th}>Actions</th></tr></thead>
             <tbody>
               {users.map(u=>(
@@ -2923,7 +2971,7 @@ ${rActs.length>0?'\nRecent Activity:\n'+rActs.map(a=>'  ['+fmtDate(a.occurred_at
                 </tr>
               ))}
             </tbody>
-          </table>
+          </table></div>
 
           {removeTarget&&(
             <Modal title={`Remove ${removeTarget.full_name}?`} onClose={()=>setRemoveTarget(null)}>
@@ -2951,16 +2999,16 @@ ${rActs.length>0?'\nRecent Activity:\n'+rActs.map(a=>'  ['+fmtDate(a.occurred_at
 
       {tab==='overview'&&(
         <div>
-          <div style={S.grid4}>
-            <div style={S.statCard}><div style={{...S.statVal,color:'#f97316',fontSize:24}}>{restaurants.length}</div><div style={S.statLabel}>Restaurants</div></div>
-            <div style={S.statCard}><div style={{...S.statVal,color:'#3b82f6',fontSize:24}}>{contacts.length}</div><div style={S.statLabel}>Contacts</div></div>
-            <div style={S.statCard}><div style={{...S.statVal,color:'#10b981',fontSize:24}}>{activities.length}</div><div style={S.statLabel}>Activities</div></div>
-            <div style={S.statCard}><div style={{...S.statVal,color:'#8b5cf6',fontSize:24}}>{users.length}</div><div style={S.statLabel}>Team Members</div></div>
+          <div className="grid-4" style={S.grid4}>
+            <div className="stat-card" style={S.statCard}><div style={{...S.statVal,color:'#f97316',fontSize:24}}>{restaurants.length}</div><div style={S.statLabel}>Restaurants</div></div>
+            <div className="stat-card" style={S.statCard}><div style={{...S.statVal,color:'#3b82f6',fontSize:24}}>{contacts.length}</div><div style={S.statLabel}>Contacts</div></div>
+            <div className="stat-card" style={S.statCard}><div style={{...S.statVal,color:'#10b981',fontSize:24}}>{activities.length}</div><div style={S.statLabel}>Activities</div></div>
+            <div className="stat-card" style={S.statCard}><div style={{...S.statVal,color:'#8b5cf6',fontSize:24}}>{users.length}</div><div style={S.statLabel}>Team Members</div></div>
           </div>
 
           <div style={S.card}>
-            <div style={S.cardHead}><span style={S.cardTitle}>Team Targets Overview</span></div>
-            <table style={S.table}>
+            <div className="card-head" style={S.cardHead}><span style={S.cardTitle}>Team Targets Overview</span></div>
+            <div className="table-wrap"><table style={S.table}>
               <thead><tr><th style={S.th}>Member</th><th style={S.th}>Monthly Deals</th><th style={S.th}>Monthly MRR</th><th style={S.th}>Weekly Convos</th><th style={S.th}>Monthly Trials</th></tr></thead>
               <tbody>
                 {users.map(u=>(
@@ -2973,7 +3021,7 @@ ${rActs.length>0?'\nRecent Activity:\n'+rActs.map(a=>'  ['+fmtDate(a.occurred_at
                   </tr>
                 ))}
               </tbody>
-            </table>
+            </table></div>
           </div>
         </div>
       )}
@@ -3121,11 +3169,11 @@ const FundingPage=()=>{
   return(
     <div>
       {/* Stats */}
-      <div style={S.grid4}>
-        <div style={S.statCard}><div style={{...S.statVal,color:'#8b5cf6'}}>{stats.total}</div><div style={S.statLabel}>Total Deals</div></div>
-        <div style={S.statCard}><div style={{...S.statVal,color:'#f97316'}}>{fmtCurrency(stats.raising)}</div><div style={S.statLabel}>Being Raised</div></div>
-        <div style={S.statCard}><div style={{...S.statVal,color:'#f59e0b'}}>{stats.hot}</div><div style={S.statLabel}>DD / Term Sheet</div></div>
-        <div style={S.statCard}><div style={{...S.statVal,color:'#10b981'}}>{stats.closed}</div><div style={S.statLabel}>Closed</div></div>
+      <div className="grid-4" style={S.grid4}>
+        <div className="stat-card" style={S.statCard}><div style={{...S.statVal,color:'#8b5cf6'}}>{stats.total}</div><div style={S.statLabel}>Total Deals</div></div>
+        <div className="stat-card" style={S.statCard}><div style={{...S.statVal,color:'#f97316'}}>{fmtCurrency(stats.raising)}</div><div style={S.statLabel}>Being Raised</div></div>
+        <div className="stat-card" style={S.statCard}><div style={{...S.statVal,color:'#f59e0b'}}>{stats.hot}</div><div style={S.statLabel}>DD / Term Sheet</div></div>
+        <div className="stat-card" style={S.statCard}><div style={{...S.statVal,color:'#10b981'}}>{stats.closed}</div><div style={S.statLabel}>Closed</div></div>
       </div>
 
       {/* Controls */}
@@ -3169,7 +3217,7 @@ const FundingPage=()=>{
       {/* List */}
       {view==='list'&&(
         <div style={S.card}>
-          <table style={S.table}>
+          <div className="table-wrap"><table style={S.table}>
             <thead><tr>
               <th style={S.th}>Investor</th><th style={S.th}>Fund</th><th style={S.th}>Round</th><th style={S.th}>Amount</th><th style={S.th}>Stage</th><th style={S.th}>Next Action</th><th style={S.th}>Owner</th><th style={S.th}></th>
             </tr></thead>
@@ -3187,7 +3235,7 @@ const FundingPage=()=>{
                 </tr>
               ))}
             </tbody>
-          </table>
+          </table></div>
           {filtered.length===0&&<EmptyState icon="dollar" message="No funding deals yet"/>}
         </div>
       )}
@@ -3265,11 +3313,11 @@ const PartnershipsPage=()=>{
 
   return(
     <div>
-      <div style={S.grid4}>
-        <div style={S.statCard}><div style={{...S.statVal,color:'#14b8a6'}}>{stats.total}</div><div style={S.statLabel}>Total Partners</div></div>
-        <div style={S.statCard}><div style={{...S.statVal,color:'#10b981'}}>{stats.live}</div><div style={S.statLabel}>Live</div></div>
-        <div style={S.statCard}><div style={{...S.statVal,color:'#3b82f6'}}>{stats.pipeline}</div><div style={S.statLabel}>In Pipeline</div></div>
-        <div style={S.statCard}><div style={{...S.statVal,color:'#dc2626'}}>{stats.churned}</div><div style={S.statLabel}>Churned</div></div>
+      <div className="grid-4" style={S.grid4}>
+        <div className="stat-card" style={S.statCard}><div style={{...S.statVal,color:'#14b8a6'}}>{stats.total}</div><div style={S.statLabel}>Total Partners</div></div>
+        <div className="stat-card" style={S.statCard}><div style={{...S.statVal,color:'#10b981'}}>{stats.live}</div><div style={S.statLabel}>Live</div></div>
+        <div className="stat-card" style={S.statCard}><div style={{...S.statVal,color:'#3b82f6'}}>{stats.pipeline}</div><div style={S.statLabel}>In Pipeline</div></div>
+        <div className="stat-card" style={S.statCard}><div style={{...S.statVal,color:'#dc2626'}}>{stats.churned}</div><div style={S.statLabel}>Churned</div></div>
       </div>
 
       <div style={{display:'flex',gap:12,marginBottom:20,alignItems:'center',flexWrap:'wrap'}}>
@@ -3309,7 +3357,7 @@ const PartnershipsPage=()=>{
 
       {view==='list'&&(
         <div style={S.card}>
-          <table style={S.table}>
+          <div className="table-wrap"><table style={S.table}>
             <thead><tr>
               <th style={S.th}>Partner</th><th style={S.th}>Type</th><th style={S.th}>Stage</th><th style={S.th}>Channel</th><th style={S.th}>Next Action</th><th style={S.th}>Owner</th><th style={S.th}></th>
             </tr></thead>
@@ -3326,7 +3374,7 @@ const PartnershipsPage=()=>{
                 </tr>
               ))}
             </tbody>
-          </table>
+          </table></div>
           {filtered.length===0&&<EmptyState icon="link" message="No partnerships yet"/>}
         </div>
       )}
@@ -3341,7 +3389,7 @@ const PartnershipsPage=()=>{
 
 // ==================== MAIN APP SHELL ====================
 const Sidebar=()=>{
-  const{page,setPage,currentUser,logout,data}=useApp();
+  const{page,setPage,currentUser,logout,data,sidebarOpen,setSidebarOpen}=useApp();
   const isAdmin=currentUser?.role==='admin';
   const overdueCount=data.restaurants.filter(r=>{
     if(['live','closed'].includes(r.stage)||!r.next_action_date)return false;
@@ -3361,40 +3409,52 @@ const Sidebar=()=>{
     ...(isAdmin?[{id:'admin',icon:'settings',label:'Admin'}]:[]),
   ];
 
+  const handleNav=(id)=>{setPage(id);setSidebarOpen(false);};
+
   return(
-    <div style={S.sidebar}>
-      <div style={{...S.logo,display:'flex',alignItems:'center',justifyContent:'center'}}>
-        <img src="logo.svg" alt="Remy AI" style={{width:40,height:40}}/>
-      </div>
-      <nav style={S.nav}>
-        {navItems.map(item=>(
-          <button key={item.id} style={{...S.navItem,...(page===item.id?S.navActive:{})}} onClick={()=>setPage(item.id)}>
-            <I name={item.icon} size={18}/>
-            <span>{item.label}</span>
-            {item.badge&&<span style={S.navBadge}>{item.badge}</span>}
-          </button>
-        ))}
-      </nav>
-      <div style={S.userArea}>
-        <div style={{display:'flex',alignItems:'center',gap:10,padding:'8px 12px'}}>
-          <Avatar name={currentUser?.full_name} size={32}/>
-          <div style={{flex:1,minWidth:0}}>
-            <div style={{fontSize:13,fontWeight:500,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{currentUser?.full_name}</div>
-            <div style={{fontSize:11,color:'#71717a'}}>{currentUser?.role==='admin'?'Admin':'Sales Rep'}</div>
+    <>
+      <div className={`sidebar-overlay${sidebarOpen?' visible':''}`} onClick={()=>setSidebarOpen(false)} style={{display:sidebarOpen?'block':'none'}}/>
+      <div style={S.sidebar} className={`sidebar-desktop${sidebarOpen?' open':''}`}>
+        <div style={{...S.logo,display:'flex',alignItems:'center',justifyContent:'space-between'}}>
+          <img src="logo.svg" alt="Remy AI" style={{width:40,height:40}}/>
+          <button className="hamburger-btn" style={{...S.btn,...S.btnGhost,padding:4}} onClick={()=>setSidebarOpen(false)}><I name="x" size={20}/></button>
+        </div>
+        <nav style={S.nav}>
+          {navItems.map(item=>(
+            <button key={item.id} style={{...S.navItem,...(page===item.id?S.navActive:{})}} onClick={()=>handleNav(item.id)}>
+              <I name={item.icon} size={18}/>
+              <span>{item.label}</span>
+              {item.badge&&<span style={S.navBadge}>{item.badge}</span>}
+            </button>
+          ))}
+        </nav>
+        <div style={S.userArea}>
+          <div style={{display:'flex',alignItems:'center',gap:10,padding:'8px 12px'}}>
+            <Avatar name={currentUser?.full_name} size={32}/>
+            <div style={{flex:1,minWidth:0}}>
+              <div style={{fontSize:13,fontWeight:500,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{currentUser?.full_name}</div>
+              <div style={{fontSize:11,color:'#71717a'}}>{currentUser?.role==='admin'?'Admin':'Sales Rep'}</div>
+            </div>
+            <button style={{...S.btn,...S.btnGhost,padding:4}} onClick={logout} title="Sign out"><I name="logout" size={16}/></button>
           </div>
-          <button style={{...S.btn,...S.btnGhost,padding:4}} onClick={logout} title="Sign out"><I name="logout" size={16}/></button>
         </div>
       </div>
-    </div>
+    </>
   );
 };
 
-const PageHeader=({title,children})=>(
-  <div style={S.header}>
-    <h1 style={S.pageTitle}>{title}</h1>
-    <div style={{display:'flex',alignItems:'center',gap:12}}>{children}</div>
-  </div>
-);
+const PageHeader=({title,children})=>{
+  const{setSidebarOpen}=useApp();
+  return(
+    <div style={S.header} className="page-header">
+      <div style={{display:'flex',alignItems:'center',gap:12}}>
+        <button className="hamburger-btn" style={{...S.btn,...S.btnGhost,padding:4}} onClick={()=>setSidebarOpen(true)}><I name="menu" size={22}/></button>
+        <h1 style={S.pageTitle} className="page-title">{title}</h1>
+      </div>
+      <div className="header-actions" style={{display:'flex',alignItems:'center',gap:12}}>{children}</div>
+    </div>
+  );
+};
 
 const pageTitles={dashboard:'Dashboard',pipeline:'Pipeline',restaurants:'Restaurants',contacts:'Contacts',network:'My Network',targets:'Targets & Leaderboard',activities:'Activities',admin:'Admin',funding:'Funding Pipeline',partners:'Partnerships'};
 
@@ -3403,9 +3463,9 @@ const AppContent=()=>{
   const pages={dashboard:Dashboard,pipeline:Pipeline,restaurants:RestaurantsList,contacts:ContactsPage,network:LinkedInPage,targets:TargetsPage,activities:ActivitiesPage,admin:AdminPage,funding:FundingPage,partners:PartnershipsPage};
   const Page=pages[page]||Dashboard;
   return(
-    <div style={S.main}>
+    <div style={S.main} className="main-content">
       <PageHeader title={pageTitles[page]||'Dashboard'}/>
-      <div style={S.content}><Page/></div>
+      <div style={S.content} className="page-content"><Page/></div>
     </div>
   );
 };
