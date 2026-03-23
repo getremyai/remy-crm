@@ -1,7 +1,6 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <link rel="icon" type="image/png" href="logo.png">
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Remy CRM</title>
@@ -11,6 +10,7 @@
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
     <script src="https://accounts.google.com/gsi/client" async defer></script>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/string-similarity@4.0.4/umd/string-similarity.min.js"></script>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
     <style>
         *{margin:0;padding:0;box-sizing:border-box;}
@@ -1721,11 +1721,24 @@ const isBlocklisted=(company)=>{
   return COMPANY_BLOCKLIST.some(bl=>c.includes(bl));
 };
 
+// Normalise company/restaurant names for fair comparison
+const normaliseName=(name)=>{
+  return name.toLowerCase()
+    .replace(/[''`\-\.&]/g,' ')
+    .replace(/\b(the|ltd|limited|plc|inc|llc|group|co|uk)\b/g,'')
+    .replace(/\s+/g,' ')
+    .trim();
+};
+
 const matchReasons=(contact,restaurants)=>{
   const results=[];
   const comp=(contact.company||'').toLowerCase().trim();
   const pos=(contact.position||'').toLowerCase().trim();
   if(!comp)return results;
+
+  // Check if company is on the blocklist — if so, skip partial/fuzzy matches (exact still allowed)
+  const blocked=isBlocklisted(contact.company||'');
+  const normComp=normaliseName(contact.company||'');
 
   restaurants.forEach(r=>{
     const rName=r.name.toLowerCase();
@@ -1733,29 +1746,76 @@ const matchReasons=(contact,restaurants)=>{
     const reasons=[];
 
     // Exact match on restaurant name
-    if(comp===rName)reasons.push({type:'exact_name',strength:'high',text:`Company "${contact.company}" exactly matches restaurant "${r.name}"`});
+    if(comp===rName){
+      reasons.push({type:'exact_name',strength:'high',score:100,text:`Company "${contact.company}" exactly matches restaurant "${r.name}"`});
+    }
     // Exact match on group name
-    else if(rGroup&&comp===rGroup)reasons.push({type:'exact_group',strength:'high',text:`Company "${contact.company}" exactly matches group "${r.group_name}"`});
-    // Restaurant name contained in company (min 5 chars to avoid tiny false matches)
-    else if(rName.length>=5&&comp.includes(rName))reasons.push({type:'partial',strength:'medium',text:`Restaurant name "${r.name}" found within company "${contact.company}"`});
-    // Company contained in restaurant name (min 5 chars)
-    else if(comp.length>=5&&rName.includes(comp))reasons.push({type:'partial',strength:'medium',text:`Company "${contact.company}" found within restaurant name "${r.name}"`});
-    // Group name partial (min 5 chars)
-    else if(rGroup&&rGroup.length>=5&&(comp.includes(rGroup)||rGroup.includes(comp)))reasons.push({type:'partial_group',strength:'medium',text:`Group "${r.group_name}" matches company "${contact.company}"`});
+    else if(rGroup&&comp===rGroup){
+      reasons.push({type:'exact_group',strength:'high',score:100,text:`Company "${contact.company}" exactly matches group "${r.group_name}"`});
+    }
+    // Fuzzy match (replaces all partial substring checks) — skip if blocklisted
+    else if(!blocked){
+      const normR=normaliseName(r.name);
+      const sim=stringSimilarity.compareTwoStrings(normComp,normR);
+      let groupSim=0;
+      if(rGroup){
+        const normG=normaliseName(r.group_name);
+        groupSim=stringSimilarity.compareTwoStrings(normComp,normG);
+      }
+      const bestSim=Math.max(sim,groupSim);
+      const matchedOn=groupSim>sim?'group':'name';
+      if(bestSim>=0.6){
+        const pct=Math.round(bestSim*100);
+        const strength=bestSim>=0.85?'high':'medium';
+        const target=matchedOn==='group'?r.group_name:r.name;
+        reasons.push({type:'fuzzy',strength,score:pct,text:`Company "${contact.company}" is ${pct}% similar to ${matchedOn} "${target}"`});
+      }
+    }
 
     // Position relevance bonus (compound terms only)
     const posHits=kwMatch(pos,HOSP_POSITION_KW);
     if(reasons.length>0&&posHits.length>0){
-      reasons.push({type:'position',strength:'bonus',text:`Position "${contact.position}" matches: ${posHits.join(', ')}`});
+      reasons.push({type:'position',strength:'bonus',score:20,text:`Position "${contact.position}" matches: ${posHits.join(', ')}`});
     }
 
     if(reasons.length>0){
       const strength=reasons.some(r=>r.strength==='high')?'high':'medium';
-      results.push({restaurant:r,reasons,strength});
+      const topScore=Math.max(...reasons.map(r=>r.score||0));
+      results.push({restaurant:r,reasons,strength,score:topScore});
     }
   });
 
+  // Sort by score descending so best matches come first
+  results.sort((a,b)=>b.score-a.score);
   return results;
+};
+
+// Compute a 0–100 confidence score combining name match, position, keywords, and blocklist
+const computeConfidence=(contact,matchResult)=>{
+  let score=0;
+  const comp=(contact.company||'').toLowerCase();
+  const pos=(contact.position||'').toLowerCase();
+
+  // Name match score
+  const topReason=matchResult.reasons[0];
+  if(topReason?.type==='exact_name'||topReason?.type==='exact_group'){
+    score+=40;
+  } else if(topReason?.type==='fuzzy'&&topReason.score){
+    score+=Math.round(((topReason.score/100)-0.6)/0.4*20+15);
+  }
+
+  // Position relevance bonus
+  const posHits=kwMatch(pos,HOSP_POSITION_KW);
+  if(posHits.length>0) score+=20;
+
+  // Company hospitality keyword bonus
+  const compHits=kwMatch(comp,HOSP_COMPANY_KW);
+  if(compHits.length>0) score+=10;
+
+  // Blocklist penalty (if it still matched via exact)
+  if(isBlocklisted(contact.company||'')) score-=15;
+
+  return Math.max(0,Math.min(100,score));
 };
 
 const isHospitalityContact=(contact)=>{
@@ -1893,10 +1953,16 @@ const LinkedInPage=()=>{
         if(c.alreadyExists)return;
         const matches=matchReasons(c,data.restaurants);
         if(matches.length>0){
-          pm.push({...c,idx,matches,bestMatch:matches.sort((a,b)=>a.strength==='high'?-1:1)[0]});
+          const bestMatch=matches[0]; // already sorted by score from matchReasons
+          const confidence=computeConfidence(c,bestMatch);
+          if(confidence>=30){ // skip very low confidence matches
+            pm.push({...c,idx,matches,bestMatch,confidence});
+          }
           seen.add(idx);
         }
       });
+      // Sort pipeline matches by confidence (best first)
+      pm.sort((a,b)=>b.confidence-a.confidence);
 
       // Step 2: find hospitality, investor, and partner contacts not already matched
       const invOnly=[];const partOnly=[];
@@ -2037,8 +2103,12 @@ const LinkedInPage=()=>{
     </div>
   );
 
-  const StrengthBadge=({strength})=>(
-    <span style={{...S.badge,background:strength==='high'?'rgba(16,185,129,0.15)':'rgba(245,158,11,0.15)',color:strength==='high'?'#10b981':'#f59e0b',fontSize:11}}>{strength==='high'?'Strong match':'Partial match'}</span>
+  const StrengthBadge=({strength,confidence})=>{
+    const bg=confidence>=70?'rgba(16,185,129,0.15)':confidence>=50?'rgba(245,158,11,0.15)':'rgba(239,68,68,0.1)';
+    const color=confidence>=70?'#10b981':confidence>=50?'#f59e0b':'#ef4444';
+    const label=confidence>=70?'Strong':confidence>=50?'Medium':'Weak';
+    return <span style={{...S.badge,background:bg,color,fontSize:11}}>{label} &bull; {confidence}%</span>;
+  };
   );
 
   // ========== STEP 1: Upload ==========
@@ -2120,7 +2190,7 @@ const LinkedInPage=()=>{
                   {current.email&&<div style={{fontSize:12,color:'#71717a',marginTop:4}}>{current.email}</div>}
                   {current.linkedinUrl&&<div style={{fontSize:12,color:'#3b82f6',marginTop:2}}>{current.linkedinUrl}</div>}
                 </div>
-                <StrengthBadge strength={current.bestMatch.strength}/>
+                <StrengthBadge strength={current.bestMatch.strength} confidence={current.confidence}/>
               </div>
 
               {/* Match reasoning */}
