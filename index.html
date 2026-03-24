@@ -1730,7 +1730,7 @@ const normaliseName=(name)=>{
     .trim();
 };
 
-const matchReasons=(contact,restaurants)=>{
+const matchReasons=(contact,restaurants,fuzzyMin=0.6)=>{
   const results=[];
   const comp=(contact.company||'').toLowerCase().trim();
   const pos=(contact.position||'').toLowerCase().trim();
@@ -1764,7 +1764,7 @@ const matchReasons=(contact,restaurants)=>{
       }
       const bestSim=Math.max(sim,groupSim);
       const matchedOn=groupSim>sim?'group':'name';
-      if(bestSim>=0.6){
+      if(bestSim>=fuzzyMin){
         const pct=Math.round(bestSim*100);
         const strength=bestSim>=0.85?'high':'medium';
         const target=matchedOn==='group'?r.group_name:r.name;
@@ -1893,7 +1893,22 @@ const LinkedInPage=()=>{
   const[hospBlurbs,setHospBlurbs]=useState({});
   const[importedCount,setImportedCount]=useState(0);
   const[dragActive,setDragActive]=useState(false);
+  const[showSettings,setShowSettings]=useState(false);
   const fileRef=useRef(null);
+
+  // Per-user matching thresholds (persisted in localStorage)
+  const lsKey=`remy_li_thresholds_${currentUser?.id||'default'}`;
+  const loadThresholds=()=>{try{return JSON.parse(localStorage.getItem(lsKey))||{}}catch{return{}}};
+  const saved=loadThresholds();
+  const[fuzzyThreshold,setFuzzyThreshold]=useState(saved.fuzzy??60);
+  const[minConfidence,setMinConfidence]=useState(saved.minConf??30);
+  const saveThreshold=(key,val)=>{
+    const cur=loadThresholds();
+    cur[key]=val;
+    try{localStorage.setItem(lsKey,JSON.stringify(cur))}catch{}
+  };
+  const updateFuzzy=(v)=>{setFuzzyThreshold(v);saveThreshold('fuzzy',v)};
+  const updateMinConf=(v)=>{setMinConfidence(v);saveThreshold('minConf',v)};
 
   const parseCSVRow=(row)=>{
     const cols=[];let cur='';let inQ=false;
@@ -1951,11 +1966,11 @@ const LinkedInPage=()=>{
       const seen=new Set();
       all.forEach((c,idx)=>{
         if(c.alreadyExists)return;
-        const matches=matchReasons(c,data.restaurants);
+        const matches=matchReasons(c,data.restaurants,fuzzyThreshold/100);
         if(matches.length>0){
           const bestMatch=matches[0]; // already sorted by score from matchReasons
           const confidence=computeConfidence(c,bestMatch);
-          if(confidence>=30){ // skip very low confidence matches
+          if(confidence>=minConfidence){
             pm.push({...c,idx,matches,bestMatch,confidence});
           }
           seen.add(idx);
@@ -2109,7 +2124,6 @@ const LinkedInPage=()=>{
     const label=confidence>=70?'Strong':confidence>=50?'Medium':'Weak';
     return <span style={{...S.badge,background:bg,color,fontSize:11}}>{label} &bull; {confidence}%</span>;
   };
-  );
 
   // ========== STEP 1: Upload ==========
   if(step===1)return(
@@ -2137,6 +2151,49 @@ const LinkedInPage=()=>{
         <div style={{fontSize:14,color:'#a1a1aa'}}>Drop Connections.csv here or click to browse</div>
         <div style={{fontSize:12,color:'#52525b'}}>LinkedIn Settings → Data Privacy → Get a copy of your data → Connections</div>
         <input ref={fileRef} type="file" accept=".csv" style={{display:'none'}} onChange={e=>handleFile(e.target.files[0])}/>
+      </div>
+
+      {/* Matching sensitivity settings */}
+      <div style={{marginTop:20}}>
+        <button onClick={()=>setShowSettings(!showSettings)} style={{background:'none',border:'none',cursor:'pointer',display:'flex',alignItems:'center',gap:6,padding:0}}>
+          <I name="settings" size={14} color="#71717a"/>
+          <span style={{fontSize:13,color:'#71717a',fontWeight:500}}>Matching sensitivity</span>
+          <span style={{fontSize:12,color:'#52525b',transform:showSettings?'rotate(180deg)':'rotate(0)',display:'inline-block',transition:'transform 0.2s'}}>&#9662;</span>
+        </button>
+        {showSettings&&(
+          <div style={{marginTop:12,background:'#18181b',border:'1px solid #27272a',borderRadius:8,padding:20}} className="fade-in">
+            <div style={{marginBottom:20}}>
+              <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8}}>
+                <label style={{fontSize:13,color:'#a1a1aa',fontWeight:500}}>Fuzzy match threshold</label>
+                <span style={{fontSize:13,color:'#f97316',fontWeight:600,minWidth:40,textAlign:'right'}}>{fuzzyThreshold}%</span>
+              </div>
+              <input type="range" min={30} max={95} step={5} value={fuzzyThreshold} onChange={e=>updateFuzzy(Number(e.target.value))}
+                style={{width:'100%',accentColor:'#f97316',height:6,cursor:'pointer'}}/>
+              <div style={{display:'flex',justifyContent:'space-between',marginTop:4}}>
+                <span style={{fontSize:11,color:'#52525b'}}>Loose (more matches)</span>
+                <span style={{fontSize:11,color:'#52525b'}}>Strict (fewer matches)</span>
+              </div>
+              <p style={{fontSize:12,color:'#52525b',marginTop:8,lineHeight:1.5}}>How similar a company name must be to a restaurant name to count as a match. Lower values catch more variations but may include false positives.</p>
+            </div>
+            <div>
+              <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8}}>
+                <label style={{fontSize:13,color:'#a1a1aa',fontWeight:500}}>Minimum confidence to show</label>
+                <span style={{fontSize:13,color:'#f97316',fontWeight:600,minWidth:40,textAlign:'right'}}>{minConfidence}%</span>
+              </div>
+              <input type="range" min={10} max={70} step={5} value={minConfidence} onChange={e=>updateMinConf(Number(e.target.value))}
+                style={{width:'100%',accentColor:'#f97316',height:6,cursor:'pointer'}}/>
+              <div style={{display:'flex',justifyContent:'space-between',marginTop:4}}>
+                <span style={{fontSize:11,color:'#52525b'}}>Show more (review everything)</span>
+                <span style={{fontSize:11,color:'#52525b'}}>Show less (only strong leads)</span>
+              </div>
+              <p style={{fontSize:12,color:'#52525b',marginTop:8,lineHeight:1.5}}>Matches below this confidence score are hidden from the review queue. Combines name similarity, job title relevance, and industry signals.</p>
+            </div>
+            <div style={{marginTop:16,paddingTop:12,borderTop:'1px solid #27272a',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+              <span style={{fontSize:11,color:'#3f3f46'}}>Settings are saved per user</span>
+              <button onClick={()=>{updateFuzzy(60);updateMinConf(30)}} style={{...S.btn,...S.btnGhost,fontSize:12,padding:'4px 10px'}}>Reset to defaults</button>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
