@@ -10,7 +10,10 @@
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
     <script src="https://accounts.google.com/gsi/client" async defer></script>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/string-similarity@4.0.4/umd/string-similarity.min.js"></script>
+    <script>
+    // Inlined string-similarity (Sørensen-Dice coefficient) — no CDN dependency
+    window.stringSimilarity={compareTwoStrings:function(a,b){a=a.replace(/\s+/g,'');b=b.replace(/\s+/g,'');if(a===b)return 1;if(a.length<2||b.length<2)return 0;var m=new Map();for(var i=0;i<a.length-1;i++){var bg=a.substring(i,i+2),c=m.has(bg)?m.get(bg)+1:1;m.set(bg,c)}var n=0;for(var j=0;j<b.length-1;j++){var bg2=b.substring(j,j+2),cnt=m.has(bg2)?m.get(bg2):0;if(cnt>0){m.set(bg2,cnt-1);n++}}return 2*n/(a.length+b.length-2)}};
+    </script>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
     <style>
         *{margin:0;padding:0;box-sizing:border-box;}
@@ -1730,7 +1733,7 @@ const normaliseName=(name)=>{
     .trim();
 };
 
-const matchReasons=(contact,restaurants,fuzzyMin=0.6)=>{
+const matchReasons=(contact,restaurants,fuzzyMin=0.5)=>{
   const results=[];
   const comp=(contact.company||'').toLowerCase().trim();
   const pos=(contact.position||'').toLowerCase().trim();
@@ -1756,11 +1759,18 @@ const matchReasons=(contact,restaurants,fuzzyMin=0.6)=>{
     // Fuzzy match (replaces all partial substring checks) — skip if blocklisted
     else if(!blocked){
       const normR=normaliseName(r.name);
-      const sim=stringSimilarity.compareTwoStrings(normComp,normR);
+      // Dice coefficient for overall similarity
+      let sim=stringSimilarity.compareTwoStrings(normComp,normR);
+      // Containment bonus: if one name fully contains the other (min 4 chars), boost score
+      if(normR.length>=4&&normComp.includes(normR))sim=Math.max(sim,0.7+normR.length/(normComp.length+normR.length)*0.3);
+      else if(normComp.length>=4&&normR.includes(normComp))sim=Math.max(sim,0.7+normComp.length/(normComp.length+normR.length)*0.3);
+
       let groupSim=0;
       if(rGroup){
         const normG=normaliseName(r.group_name);
         groupSim=stringSimilarity.compareTwoStrings(normComp,normG);
+        if(normG.length>=4&&normComp.includes(normG))groupSim=Math.max(groupSim,0.7+normG.length/(normComp.length+normG.length)*0.3);
+        else if(normComp.length>=4&&normG.includes(normComp))groupSim=Math.max(groupSim,0.7+normComp.length/(normComp.length+normG.length)*0.3);
       }
       const bestSim=Math.max(sim,groupSim);
       const matchedOn=groupSim>sim?'group':'name';
@@ -1900,7 +1910,7 @@ const LinkedInPage=()=>{
   const lsKey=`remy_li_thresholds_${currentUser?.id||'default'}`;
   const loadThresholds=()=>{try{return JSON.parse(localStorage.getItem(lsKey))||{}}catch{return{}}};
   const saved=loadThresholds();
-  const[fuzzyThreshold,setFuzzyThreshold]=useState(saved.fuzzy??60);
+  const[fuzzyThreshold,setFuzzyThreshold]=useState(saved.fuzzy??50);
   const[minConfidence,setMinConfidence]=useState(saved.minConf??30);
   const saveThreshold=(key,val)=>{
     const cur=loadThresholds();
@@ -2190,7 +2200,7 @@ const LinkedInPage=()=>{
             </div>
             <div style={{marginTop:16,paddingTop:12,borderTop:'1px solid #27272a',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
               <span style={{fontSize:11,color:'#3f3f46'}}>Settings are saved per user</span>
-              <button onClick={()=>{updateFuzzy(60);updateMinConf(30)}} style={{...S.btn,...S.btnGhost,fontSize:12,padding:'4px 10px'}}>Reset to defaults</button>
+              <button onClick={()=>{updateFuzzy(50);updateMinConf(30)}} style={{...S.btn,...S.btnGhost,fontSize:12,padding:'4px 10px'}}>Reset to defaults</button>
             </div>
           </div>
         )}
